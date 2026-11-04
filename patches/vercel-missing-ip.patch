@@ -1,4 +1,3 @@
-diff --git a/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts b/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts
 --- a/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts
 +++ b/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts
 @@ -1,3 +1,4 @@
@@ -20,7 +19,6 @@ diff --git a/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts b/s
            },
          },
        },
-diff --git a/src/components/liekan/ReportComponents.tsx b/src/components/liekan/ReportComponents.tsx
 --- a/src/components/liekan/ReportComponents.tsx
 +++ b/src/components/liekan/ReportComponents.tsx
 @@ -536,8 +536,10 @@
@@ -35,7 +33,6 @@ diff --git a/src/components/liekan/ReportComponents.tsx b/src/components/liekan/
        </>
      );
    if (table === 'logBody' && field === 'path')
-diff --git a/src/components/liekan/features/CrawlerDialog.tsx b/src/components/liekan/features/CrawlerDialog.tsx
 --- a/src/components/liekan/features/CrawlerDialog.tsx
 +++ b/src/components/liekan/features/CrawlerDialog.tsx
 @@ -457,7 +457,7 @@
@@ -47,7 +44,6 @@ diff --git a/src/components/liekan/features/CrawlerDialog.tsx b/src/components/l
                        [
                          i18n.text('身份核验'),
                          i18n.text('范围 {v0} · DNS {v3} · 边缘 {v4} · 未匹配 {v1} · 未核验 {v2}', [
-diff --git a/src/lib/liekan/contracts/crawler-analysis.ts b/src/lib/liekan/contracts/crawler-analysis.ts
 --- a/src/lib/liekan/contracts/crawler-analysis.ts
 +++ b/src/lib/liekan/contracts/crawler-analysis.ts
 @@ -10,7 +10,7 @@
@@ -77,7 +73,6 @@ diff --git a/src/lib/liekan/contracts/crawler-analysis.ts b/src/lib/liekan/contr
      platforms: CrawlerAnalyzedPlatform[];
    };
    bots: CrawlerAnalyzedBot[];
-diff --git a/src/lib/liekan/crawlers/analysis.ts b/src/lib/liekan/crawlers/analysis.ts
 --- a/src/lib/liekan/crawlers/analysis.ts
 +++ b/src/lib/liekan/crawlers/analysis.ts
 @@ -62,7 +62,7 @@
@@ -116,7 +111,6 @@ diff --git a/src/lib/liekan/crawlers/analysis.ts b/src/lib/liekan/crawlers/analy
              websiteId,
              new Date(previousRange.startAt),
              new Date(previousRange.endAt),
-diff --git a/src/lib/liekan/history-repair/model.ts b/src/lib/liekan/history-repair/model.ts
 --- a/src/lib/liekan/history-repair/model.ts
 +++ b/src/lib/liekan/history-repair/model.ts
 @@ -269,7 +269,9 @@
@@ -130,7 +124,6 @@ diff --git a/src/lib/liekan/history-repair/model.ts b/src/lib/liekan/history-rep
    };
    const afterProductForm = after.crawlerId ? catalog?.forms.get(after.crawlerId) || null : null;
    return {
-diff --git a/src/lib/liekan/ingest.ts b/src/lib/liekan/ingest.ts
 --- a/src/lib/liekan/ingest.ts
 +++ b/src/lib/liekan/ingest.ts
 @@ -19,9 +19,11 @@
@@ -148,7 +141,6 @@ diff --git a/src/lib/liekan/ingest.ts b/src/lib/liekan/ingest.ts
    userAgent: string;
    location: string;
    declaredLocation?: string | null;
-diff --git a/src/lib/liekan/log-ingestion/measurement.ts b/src/lib/liekan/log-ingestion/measurement.ts
 --- a/src/lib/liekan/log-ingestion/measurement.ts
 +++ b/src/lib/liekan/log-ingestion/measurement.ts
 @@ -19,6 +19,17 @@
@@ -169,8 +161,6 @@ diff --git a/src/lib/liekan/log-ingestion/measurement.ts b/src/lib/liekan/log-in
  });
  export type LogMeasurement = z.infer<typeof logMeasurementSchema>;
  
-diff --git a/src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts b/src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts
-new file mode 100644
 --- /dev/null
 +++ b/src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts
 @@ -0,0 +1,50 @@
@@ -224,11 +214,10 @@ new file mode 100644
 +});
 +
 +});
-diff --git a/src/lib/liekan/log-ingestion/vercel-requests.test.ts b/src/lib/liekan/log-ingestion/vercel-requests.test.ts
-new file mode 100644
 --- /dev/null
 +++ b/src/lib/liekan/log-ingestion/vercel-requests.test.ts
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,129 @@
++// @vitest-environment node
 +// Synthetic QA fixtures only; no production logs, credentials, or network.
 +import { describe, expect, it } from 'vitest';
 +import { parseVercelRequests, vercelRequestPurpose } from './vercel-requests';
@@ -357,8 +346,6 @@ new file mode 100644
 +    expect(store).toContain('source_evidence');
 +  });
 +});
-diff --git a/src/lib/liekan/log-ingestion/vercel-requests.ts b/src/lib/liekan/log-ingestion/vercel-requests.ts
-new file mode 100644
 --- /dev/null
 +++ b/src/lib/liekan/log-ingestion/vercel-requests.ts
 @@ -0,0 +1,150 @@
@@ -512,7 +499,6 @@ new file mode 100644
 +      unclassifiedRequests: records.filter(r => r.requestProvenance.purpose === 'unclassified').length },
 +  };
 +}
-diff --git a/src/lib/liekan/rules/verification-labels.ts b/src/lib/liekan/rules/verification-labels.ts
 --- a/src/lib/liekan/rules/verification-labels.ts
 +++ b/src/lib/liekan/rules/verification-labels.ts
 @@ -4,6 +4,7 @@
@@ -523,7 +509,6 @@ diff --git a/src/lib/liekan/rules/verification-labels.ts b/src/lib/liekan/rules/
        ambiguous_name: '请求声明的名称存在歧义',
        unmapped_identity: '未映射官方身份',
        missing_snapshot: '缺少合格范围记录',
-diff --git a/src/lib/liekan/store.ts b/src/lib/liekan/store.ts
 --- a/src/lib/liekan/store.ts
 +++ b/src/lib/liekan/store.ts
 @@ -1,3 +1,4 @@
@@ -601,7 +586,6 @@ diff --git a/src/lib/liekan/store.ts b/src/lib/liekan/store.ts
      };
    });
    invalidateWebsiteAnalytics(id);
-diff --git a/src/lib/liekan/upstream/geo-weight-sql.ts b/src/lib/liekan/upstream/geo-weight-sql.ts
 --- a/src/lib/liekan/upstream/geo-weight-sql.ts
 +++ b/src/lib/liekan/upstream/geo-weight-sql.ts
 @@ -22,7 +22,7 @@
@@ -613,7 +597,6 @@ diff --git a/src/lib/liekan/upstream/geo-weight-sql.ts b/src/lib/liekan/upstream
          e.crawler_id,e.catalog_version,e.classification_version,e.measurement,e.identity_evidence,
          e.edge_observation#>>'{fields,EdgeResponseContentType,state}' AS mime_state,
          e.edge_observation#>>'{fields,EdgeResponseContentType,value}' AS mime,
-diff --git a/src/lib/liekan/upstream/logs.ts b/src/lib/liekan/upstream/logs.ts
 --- a/src/lib/liekan/upstream/logs.ts
 +++ b/src/lib/liekan/upstream/logs.ts
 @@ -245,7 +245,7 @@
@@ -625,8 +608,6 @@ diff --git a/src/lib/liekan/upstream/logs.ts b/src/lib/liekan/upstream/logs.ts
            ...args,
            search,
            ...(cursor ? boundary : [(page - 1) * 100]),
-diff --git a/src/lib/liekan/vercel-import.test.ts b/src/lib/liekan/vercel-import.test.ts
-new file mode 100644
 --- /dev/null
 +++ b/src/lib/liekan/vercel-import.test.ts
 @@ -0,0 +1,75 @@
@@ -705,8 +686,6 @@ new file mode 100644
 + await expect(importLogs(website,'qa.himax.invalid',input({records:[record({httpStatus:500})]}),identity)).rejects.toMatchObject({status:409});
 + expect(m.writes).toHaveLength(0);
 +});
-diff --git a/db/liekan/migrations/068_vercel_request_evidence.sql b/db/liekan/migrations/068_vercel_request_evidence.sql
-new file mode 100644
 --- /dev/null
 +++ b/db/liekan/migrations/068_vercel_request_evidence.sql
 @@ -0,0 +1,25 @@

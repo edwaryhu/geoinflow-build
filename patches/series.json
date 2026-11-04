@@ -7,11 +7,11 @@
     },
     {
       "path": "patches/vercel-missing-ip.patch",
-      "sha256": "4a74111f566083d60c8f4ece249c829af84116fc86fd56b90bfa931071e1d992"
+      "sha256": "e04360122a971d3b812b575c7b27bea13e7a61397a1a52ab67b1b93d5a1fffc3"
     },
     {
       "path": "patches/vercel-history.patch",
-      "sha256": "9cc2cb3ef91bce28d809b0e48854500524f43aa469ad7916a0194353161f4d96"
+      "sha256": "1b470cece36437051f3297f75865e26afe7f8c765251a910fc35f17d77f90173"
     }
   ],
   "test_files": [
