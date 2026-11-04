@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Package only public archive bytes; never read a deployment filesystem."""
-import argparse, hashlib, io, json, lzma, os, pathlib, shutil, tarfile, tempfile
+import argparse, hashlib, io, json, lzma, os, pathlib, re, shutil, tarfile, tempfile
 
 def digest(path):
  h=hashlib.sha256()
@@ -37,7 +37,8 @@ def hash_stream(stream, spool=None):
 def write_json_xz(path,data):
  with lzma.open(path,'wt',encoding='utf-8',preset=6) as f:json.dump(data,f,separators=(',',':'),sort_keys=True);f.write('\n')
 
-def build(base,target,out,base_sha,target_sha):
+def build(base,target,out,base_sha,target_sha,target_run):
+ assert re.fullmatch(r"[0-9]{8,16}",target_run),"Invalid target build run"
  assert digest(base)==base_sha,'Base archive hash mismatch'
  assert digest(target)==target_sha,'Target archive hash mismatch'
  out.mkdir(parents=True,exist_ok=False)
@@ -89,7 +90,7 @@ def build(base,target,out,base_sha,target_sha):
    actual,n=hash_stream(archive.extractfile(member));assert actual==index[name]['sha256'] and n==index[name]['size']
    delta_seen.add(name)
  assert delta_seen==set(changed)
- manifest={'schema_version':1,'source_commit':'6ba7c79d8d263ff620911fdccd90dd90be85dfb7','base_archive_sha256':base_sha,'target_archive_sha256':target_sha,'target_build_run':'41816372641','entries':sorted(entries,key=lambda e:e['path']),'changed_paths':sorted(changed),'deleted_paths':sorted(set(old)-seen),'all_target_content_covered':True}
+ manifest={'schema_version':1,'source_commit':'6ba7c79d8d263ff620911fdccd90dd90be85dfb7','base_archive_sha256':base_sha,'target_archive_sha256':target_sha,'target_build_run':target_run,'entries':sorted(entries,key=lambda e:e['path']),'changed_paths':sorted(changed),'deleted_paths':sorted(set(old)-seen),'all_target_content_covered':True}
  manifest_path=out/'rootfs-manifest.json.xz';write_json_xz(manifest_path,manifest)
  parts=[];part_size=4*1024*1024
  if delta.stat().st_size>part_size:
@@ -98,7 +99,7 @@ def build(base,target,out,base_sha,target_sha):
    while chunk:=f.read(part_size):
     p=out/('rootfs-delta.tar.xz.part%03d'%i);p.write_bytes(chunk);parts.append({'name':p.name,'bytes':len(chunk),'sha256':digest(p)});i+=1
  else:parts=[{'name':delta.name,'bytes':delta.stat().st_size,'sha256':digest(delta)}]
- summary={'schema_version':1,'source_commit':manifest['source_commit'],'base_archive_sha256':base_sha,'target_archive_sha256':target_sha,'target_build_run':'41816372641','manifest':{'name':manifest_path.name,'bytes':manifest_path.stat().st_size,'sha256':digest(manifest_path)},'delta':{'name':delta.name,'bytes':delta.stat().st_size,'sha256':digest(delta),'parts':parts},'entry_count':len(entries),'changed_file_count':len(changed),'changed_uncompressed_bytes':changed_bytes,'reused_uncompressed_bytes':reused_bytes,'deleted_path_count':len(manifest['deleted_paths']),'forced_pristine_paths':['app/public/script.js'],'verified_delta_contents':True,'scope':'Public never-started image archives only. No server files or visitor data. No deployment performed.'}
+ summary={'schema_version':1,'source_commit':manifest['source_commit'],'base_archive_sha256':base_sha,'target_archive_sha256':target_sha,'target_build_run':target_run,'manifest':{'name':manifest_path.name,'bytes':manifest_path.stat().st_size,'sha256':digest(manifest_path)},'delta':{'name':delta.name,'bytes':delta.stat().st_size,'sha256':digest(delta),'parts':parts},'entry_count':len(entries),'changed_file_count':len(changed),'changed_uncompressed_bytes':changed_bytes,'reused_uncompressed_bytes':reused_bytes,'deleted_path_count':len(manifest['deleted_paths']),'forced_pristine_paths':['app/public/script.js'],'verified_delta_contents':True,'scope':'Public never-started image archives only. No server files or visitor data. No deployment performed.'}
  (out/'delta-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
  if len(parts)>1:delta.unlink()
  with open(out/'delta-SHA256SUMS','w') as f:
@@ -107,5 +108,5 @@ def build(base,target,out,base_sha,target_sha):
  return summary
 
 if __name__=='__main__':
- parser=argparse.ArgumentParser();parser.add_argument('--base',type=pathlib.Path,required=True);parser.add_argument('--target',type=pathlib.Path,required=True);parser.add_argument('--output',type=pathlib.Path,required=True);parser.add_argument('--base-sha256',required=True);parser.add_argument('--target-sha256',required=True);a=parser.parse_args()
- print(json.dumps(build(a.base,a.target,a.output,a.base_sha256,a.target_sha256),indent=2))
+ parser=argparse.ArgumentParser();parser.add_argument('--base',type=pathlib.Path,required=True);parser.add_argument('--target',type=pathlib.Path,required=True);parser.add_argument('--output',type=pathlib.Path,required=True);parser.add_argument('--base-sha256',required=True);parser.add_argument('--target-sha256',required=True);parser.add_argument('--target-build-run',required=True);a=parser.parse_args()
+ print(json.dumps(build(a.base,a.target,a.output,a.base_sha256,a.target_sha256,a.target_build_run),indent=2))
