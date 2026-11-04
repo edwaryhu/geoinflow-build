@@ -1,0 +1,62 @@
+name: Package verified public app archives as a delta (no build or deployment)
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: geoinflow-public-archive-delta
+  cancel-in-progress: false
+jobs:
+  package:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      BASE_TAG: build-6ba7c79d8d26-41787092963-1
+      TARGET_TAG: patch-6ba7c79d8d26-41816372641-1
+      BASE_SHA: fcafc1e654e99d2cf58532011e9fa92a34f9bb89ae81058ef7bd6bb40493ce18
+      TARGET_SHA: d832ed20f60e560925899c0fde3e77a08ee8f5a3506c5fc97cb0038b1c630495
+    steps:
+    - name: Fetch only reviewed packaging code and two exact public release assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir config input
+        git -C config init -q
+        git -C config remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+        git -C config fetch -q --depth=1 origin "$GITHUB_SHA"
+        git -C config checkout -q --detach FETCH_HEAD
+        gh release download "$BASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern app-rootfs.tar.xz --dir input
+        gh release download "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" --pattern app-rootfs.tar.gz --pattern build-records.json --pattern patch-series.json --dir input
+        printf '%s  %s\n' "$BASE_SHA" input/app-rootfs.tar.xz "$TARGET_SHA" input/app-rootfs.tar.gz '6f9178f21e6e74a52857a10732b1745f28114f200f1a53f9e317e273254e827c' input/build-records.json '4ebbca238ae6e9f64212ce1a5d43b145cda8d9f10d2bb6e6ca1f31d0c701666c' input/patch-series.json | sha256sum --check
+    - name: Verify build gates and package all changed bytes with complete target manifest
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'CHECK'
+        import hashlib,json
+        from pathlib import Path
+        r=json.loads(Path('input/build-records.json').read_text())
+        for k,v in r.items():
+          b=v['text'].encode();assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256'],k
+        assert r['source-commit.txt']['text'].strip()=='6ba7c79d8d263ff620911fdccd90dd90be85dfb7'
+        assert r['runtime3-probe-outcome.txt']['text'].strip()=='success'
+        assert r['runtime3-probe-exit.txt']['text'].strip()=='0'
+        t=json.loads(r['targeted-tests.json']['text']);assert t['success'] and t['numPassedTests']>=124 and t['numFailedTests']==0 and t['numPendingTests']==0
+        assert int(r['app-rootfs-uncompressed-bytes.txt']['text'])<4*1024**3
+        assert len(json.loads(Path('input/patch-series.json').read_text())['patches'])==3
+        CHECK
+        python3 config/ci/package-rootfs-delta.py --base input/app-rootfs.tar.xz --target input/app-rootfs.tar.gz --output output --base-sha256 "$BASE_SHA" --target-sha256 "$TARGET_SHA"
+    - name: Publish verified delta under a new immutable release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        tag="delta-41816372641-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        printf '%s\n' 'Content-preserving transport of two already public, hash-pinned app archives. Full target manifest records every file, mode, owner, symlink and hardlink. Delta includes only changed regular-file bytes; unchanged source files must be verified and copied into a new independent root. The target is the successful 124-test patched build, not a new build. No deployment or production data is involved. Parts must be concatenated in listed order and hash-verified before use.' > "$RUNNER_TEMP/delta-notes.txt"
+        gh release create "$tag" output/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'Verified app archive delta for build 41816372641' --notes-file "$RUNNER_TEMP/delta-notes.txt"
