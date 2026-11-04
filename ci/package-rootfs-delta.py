@@ -53,7 +53,7 @@ def build(base,target,out,base_sha,target_sha):
    old[p]=m
  entries=[];seen=set();changed=[];changed_bytes=0;reused_bytes=0
  delta=out/'rootfs-delta.tar.xz'
- with tarfile.open(target,'r|*') as archive, tarfile.open(delta,'w|xz',preset=6) as changes:
+ with tarfile.open(target,'r|*') as archive, lzma.open(delta,'wb',preset=6) as compressed, tarfile.open(fileobj=compressed,mode='w|') as changes:
   for member in archive:
    m=meta(member);p=m['path']
    if not p:continue
