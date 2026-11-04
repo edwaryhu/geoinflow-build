@@ -1,0 +1,312 @@
+--- a/src/lib/liekan/i18n/messages/en-US.json
++++ b/src/lib/liekan/i18n/messages/en-US.json
+@@ -3125,6 +3125,7 @@
+   "m_e2d0c1d78e76": "Selected analytics range",
+   "m_2e09fbb5623b": "{v0} ({v1}% crawl concentration)",
+   "m_8423902705c1": "Logs not connected",
++  "m_3c24e7c336dc": "No logs in the observation window",
+   "m_5a9facefcff8": "Crawled",
+   "m_58f5100b5a91": "Not crawled in selected range",
+   "m_ab2b69cb4764": "{v0} days",
+@@ -3755,7 +3756,7 @@
+   "m_89c21f733dfd": "I reviewed the conversion differences and matching behavior changes",
+   "m_898ecc0c8018": "Confirm conversion draft",
+   "m_2748a6aa3ddf": "Official catalog and custom rules",
+-  "m_f18c0c792132": "Official identities and tokens are maintained with each release. You can change their enabled status and type. Custom rules use token matching by default.",
++  "m_acf680191ee6": "Official catalog entries and match tokens are versioned; you can adjust their enabled state and type. Custom rules use token matching by default.",
+   "m_a7ae04a979e5": "Enable {v0}",
+   "m_faddb71b0632": "{v0} type",
+   "m_e1f0f1cb1ab4": "Match mode",
+@@ -3767,7 +3768,7 @@
+   "m_c7905cc8e3d9": "Substring match",
+   "m_e9e2a3f60ca0": "Rules already use the official catalog",
+   "m_c6d06be3d5c5": "A legacy name or vendor contains surrounding whitespace. Review and correct it before converting. The original rules are retained.",
+-  "m_44cfebf8c4a3": "Official identity",
++  "m_fac109d6ad61": "Official rule match",
+   "m_11cf2a332c8d": "{v0} (custom)",
+   "m_f0765cffbb8a": "{v0} ({v1} · {v2})",
+   "m_77130fb370d1": "Custom / historical unmapped",
+--- a/src/lib/liekan/i18n/messages/zh-CN.json
++++ b/src/lib/liekan/i18n/messages/zh-CN.json
+@@ -3125,6 +3125,7 @@
+   "m_e2d0c1d78e76": "所选统计范围",
+   "m_2e09fbb5623b": "{v0}（{v1}% 抓取集中）",
+   "m_8423902705c1": "待接入日志",
++  "m_3c24e7c336dc": "观察窗口无日志",
+   "m_5a9facefcff8": "已被抓取",
+   "m_58f5100b5a91": "所选范围未被抓取",
+   "m_ab2b69cb4764": "{v0} 天",
+@@ -3755,7 +3756,7 @@
+   "m_89c21f733dfd": "已核对转换差异与匹配行为变化",
+   "m_898ecc0c8018": "确认转换草稿",
+   "m_2748a6aa3ddf": "官方目录与自定义规则",
+-  "m_f18c0c792132": "官方身份与匹配词随版本维护，可调整启用状态和类型。自定义规则默认使用词元匹配。",
++  "m_acf680191ee6": "官方目录条目与匹配词随版本维护，可调整启用状态和类型。自定义规则默认使用词元匹配。",
+   "m_a7ae04a979e5": "启用 {v0}",
+   "m_faddb71b0632": "{v0} 类型",
+   "m_e1f0f1cb1ab4": "匹配方式",
+@@ -3767,7 +3768,7 @@
+   "m_c7905cc8e3d9": "文本包含",
+   "m_e9e2a3f60ca0": "规则已采用官方目录",
+   "m_c6d06be3d5c5": "旧版名称或厂商包含首尾空格，请核对并修正后再转换。原规则继续保留。",
+-  "m_44cfebf8c4a3": "官方身份",
++  "m_fac109d6ad61": "官方规则匹配",
+   "m_11cf2a332c8d": "{v0}（自定义）",
+   "m_f0765cffbb8a": "{v0}（{v1} · {v2}）",
+   "m_77130fb370d1": "自定义／历史未映射",
+--- a/src/components/liekan/data.ts
++++ b/src/components/liekan/data.ts
+@@ -300,7 +300,7 @@
+   row: Row,
+   display: (source: string) => string = source => source,
+ ) {
+-  if (typeof row.botId === 'string' && row.botId) return display('官方身份');
++  if (typeof row.botId === 'string' && row.botId) return display('官方规则匹配');
+   if (row.botId === null) return display('自定义／历史未映射');
+   return '';
+ }
+--- a/src/components/liekan/chartOptions.ts
++++ b/src/components/liekan/chartOptions.ts
+@@ -947,7 +947,7 @@
+     return translateText('{v0}（{v1} · {v2}）', locale, [
+       name,
+       identity.vendor || '—',
+-      translateText(identity.botId ? '官方身份' : '自定义／历史未映射', locale),
++      translateText(identity.botId ? '官方规则匹配' : '自定义／历史未映射', locale),
+     ]);
+   };
+   const displayChart = {
+--- a/src/components/liekan/features/CrawlerRulesEditor.tsx
++++ b/src/components/liekan/features/CrawlerRulesEditor.tsx
+@@ -116,7 +116,7 @@
+             <ul>
+               {preview.mappings.map((mapping, index) => (
+                 <li key={index}>
+-                  {mapping.name} → {i18n.text(mapping.crawlerId ? '官方身份' : '自定义规则')} (
++                  {mapping.name} → {i18n.text(mapping.crawlerId ? '官方规则匹配' : '自定义规则')} (
+                   {i18n.text(mapping.matchMode === 'token' ? '词元匹配' : '文本包含')})
+                 </li>
+               ))}
+@@ -159,7 +159,7 @@
+       <h3>{i18n.text('官方目录与自定义规则')}</h3>
+       <p className="muted">
+         {i18n.text(
+-          '官方身份与匹配词随版本维护，可调整启用状态和类型。自定义规则默认使用词元匹配。',
++          '官方目录条目与匹配词随版本维护，可调整启用状态和类型。自定义规则默认使用词元匹配。',
+         )}
+       </p>
+       <div className="table-wrap">
+--- a/src/components/liekan/data.test.ts
++++ b/src/components/liekan/data.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, expect, it } from 'vitest';
+ import {
++  crawlerIdentityLabel,
+   csvText,
+   formatCellValue,
+   isLiekanRoute,
+@@ -8,6 +9,7 @@
+   tableCsv,
+ } from './data';
+ import { translateText } from '@/lib/liekan/i18n/text';
++import { verificationReasonLabel } from '@/lib/liekan/rules/verification-labels';
+ 
+ describe('Liekan route boundary', () => {
+   it('recognizes all geo paths and team-scoped variants', () => {
+@@ -34,7 +36,7 @@
+         { path: '/custom', bot: 'GPTBot', botId: null },
+       ];
+       expect(formatCellValue(rows[0], 'bot', table, 'en-US', display)).toBe(
+-        'GPTBot / Official identity',
++        'GPTBot / Official rule match',
+       );
+       expect(formatCellValue(rows[1], 'bot', table, 'en-US', display)).toBe(
+         'GPTBot / Custom / historical unmapped',
+@@ -50,7 +52,7 @@
+         'en-US',
+         display,
+       );
+-      expect(csv).toContain('GPTBot / Official identity');
++      expect(csv).toContain('GPTBot / Official rule match');
+       expect(csv).toContain('GPTBot / Custom / historical unmapped');
+     },
+   );
+@@ -78,7 +80,7 @@
+       expect(lines).toHaveLength(3);
+       expect(lines[1]).toContain('GPTBot / OpenAI');
+       expect(lines[2]).toContain('GPTBot / OpenAI');
+-      expect(lines[1]).toContain(display('官方身份'));
++      expect(lines[1]).toContain(display('官方规则匹配'));
+       expect(lines[2]).toContain(display('自定义／历史未映射'));
+       expect(lines[1]).not.toBe(lines[2]);
+       expect(formatCellValue(row, 'name', 'botBody', locale, display)).toBe('GPTBot / OpenAI');
+@@ -254,3 +256,17 @@
+   expect(csv).toContain('Claude-User');
+   expect(csv).not.toContain('CCBot');
+ });
++
++it.each(['zh-CN', 'en-US'] as const)(
++  'labels rule provenance independently of actual identity verification in %s',
++  locale => {
++    const display = (source: string) => translateText(source, locale);
++    const expected = locale === 'zh-CN' ? '官方规则匹配' : 'Official rule match';
++    for (const verification of ['unverified', 'verified_range', 'verified_dns', 'verified_edge']) {
++      expect(crawlerIdentityLabel({ botId: 'gptbot', verification }, display)).toBe(expected);
++    }
++    expect(verificationReasonLabel('verified_range')).toBe('已匹配该名称的官方范围');
++    expect(verificationReasonLabel('verified_dns')).toBe('已通过官方双向 DNS 核验');
++    expect(verificationReasonLabel('trusted_cloudflare_identity')).toBe('已通过可信 Cloudflare 身份核验');
++  },
++);
+--- a/src/components/liekan/chartOptions.test.ts
++++ b/src/components/liekan/chartOptions.test.ts
+@@ -192,7 +192,7 @@
+     ],
+   };
+   const english = chartOptions('a1', chart, 'en-US');
+-  expect(english.series[0].name).toBe('网站管理 (页面访问 · Official identity)');
++  expect(english.series[0].name).toBe('网站管理 (页面访问 · Official rule match)');
+   expect(english.series[1].name).toBe('网站管理 (页面访问 · Custom / historical unmapped)');
+   expect(chartOptions('a1', chart).series[1].name).toBe(
+     '网站管理（页面访问 · 自定义／历史未映射）',
+--- a/src/components/liekan/crawler-catalog.test.tsx
++++ b/src/components/liekan/crawler-catalog.test.tsx
+@@ -97,7 +97,7 @@
+       }),
+     ).toBeVisible();
+     expect(
+-      screen.getByText(locale === 'zh-CN' ? 'OpenAI · 官方身份' : 'OpenAI · Official identity'),
++      screen.getByText(locale === 'zh-CN' ? 'OpenAI · 官方规则匹配' : 'OpenAI · Official rule match'),
+     ).toBeVisible();
+     expect(
+       screen.getByText(
+@@ -147,7 +147,7 @@
+     );
+     const rows = container.querySelectorAll('#prefList > div');
+     expect(rows).toHaveLength(3);
+-    expect(rows[0]).toHaveTextContent(locale === 'zh-CN' ? '官方身份' : 'Official identity');
++    expect(rows[0]).toHaveTextContent(locale === 'zh-CN' ? '官方规则匹配' : 'Official rule match');
+     expect(rows[0]).toHaveTextContent('/cases');
+     expect(rows[1]).toHaveTextContent(
+       locale === 'zh-CN' ? '自定义／历史未映射' : 'Custom / historical unmapped',
+--- a/src/components/liekan/crawler-pages-filter.test.tsx
++++ b/src/components/liekan/crawler-pages-filter.test.tsx
+@@ -217,7 +217,7 @@
+     expect(
+       [...cells[5].querySelectorAll('.crawler-page-leaders > span')].map(n => n.textContent),
+     ).toEqual(['GPTBot', 'ClaudeBot']);
+-    expect(cells[5].querySelector('span[title]')).toHaveAttribute('title', 'GPTBot / 官方身份');
++    expect(cells[5].querySelector('span[title]')).toHaveAttribute('title', 'GPTBot / 官方规则匹配');
+     const link = within(cells[0]).getByRole('link');
+     expect(link).toHaveAttribute('href', 'https://example.com/article');
+     expect(link).toHaveAttribute('target', '_blank');
+@@ -229,7 +229,7 @@
+     const csv = tableCsv('apBody', [row], '全部', { label: '', direction: 1 });
+     expect(csv).toContain('"页面","标题","抓取次数"');
+     expect(csv).toContain(row.title);
+-    expect(csv).toContain('GPTBot / 官方身份\nClaudeBot / 自定义／历史未映射');
++    expect(csv).toContain('GPTBot / 官方规则匹配\nClaudeBot / 自定义／历史未映射');
+   });
+   it('renders controls before the first report arrives', () => {
+     render(<AiPages rangeLabel="7 天" />);
+--- a/src/lib/liekan/contracts/geo-weight-labels.ts
++++ b/src/lib/liekan/contracts/geo-weight-labels.ts
+@@ -6,7 +6,7 @@
+   training: 'AI 训练',
+ };
+ export const geoStateLabels: Record<GeoWeightState, string> = {
+-  missing: '待接入日志',
++  missing: '观察窗口无日志',
+   unavailable: '无可计分证据',
+   warming_up: '观察中',
+   reference: '参考等级',
+--- a/src/components/liekan/features/AnalyticsPages.tsx
++++ b/src/components/liekan/features/AnalyticsPages.tsx
+@@ -2603,13 +2603,9 @@
+   );
+   const d = query.data;
+   const change = (a: number | null, b: number | null) =>
+-    a == null || b == null
++    a == null || b == null || b === 0
+       ? '—'
+-      : b
+-        ? `${a >= b ? '+' : ''}${(((a - b) / b) * 100).toFixed(2)}%`
+-        : a
+-          ? i18n.text('新增')
+-          : '0%';
++      : `${a >= b ? '+' : ''}${(((a - b) / b) * 100).toFixed(2)}%`;
+   const rate = (r: any) => (r?.visits ? (r.bounces / r.visits) * 100 : null);
+   const views = (r: any) =>
+     r?.population?.metricScope === 'qualified-browser' && !identityUsable(r.population)
+--- a/src/components/liekan/features/analytics-pages.test.tsx
++++ b/src/components/liekan/features/analytics-pages.test.tsx
+@@ -632,3 +632,39 @@
+   const chart = JSON.parse(screen.getByRole('img', { name: '同期访问趋势' }).textContent);
+   expect(chart.series[1].values).toEqual([0]);
+ });
++
++it.each([
++  [0, 0, '—'],
++  [8, 0, '—'],
++  [0, 4, '-100.00%'],
++  [6, 4, '+50.00%'],
++] as const)('keeps comparison counts while showing a valid growth rate for %s / %s', (current, previous, expected) => {
++  const data = {
++    current: { visitors: current, pageviews: current, visits: current, bounces: 0, totaltime: 0 },
++    previous: { visitors: previous, pageviews: previous, visits: previous, bounces: 0, totaltime: 0 },
++    currentSeries: {}, previousSeries: {},
++    sources: { rows: [{ referrer: 'fixture.example.test', visitors: current }] },
++    oldSources: { rows: [{ referrer: 'fixture.example.test', visitors: previous }] },
++  };
++  const original = JSON.stringify(data);
++  mocks.query['compare-rich'] = data;
++  const page = (locale: 'zh-CN' | 'en-US') => (
++    <LiekanLocaleContext.Provider value={locale}><AnalyticsPages page="compare" /></LiekanLocaleContext.Provider>
++  );
++  const view = render(page('zh-CN'));
++  for (const locale of ['zh-CN', 'en-US'] as const) {
++    view.rerender(page(locale));
++    const labels = locale === 'zh-CN' ? ['访客', '页面访问'] : ['Visitors', 'Pageviews'];
++    for (const label of labels) {
++      const card = screen.getByText(label, { selector: '.metric-label' }).closest('.metric')!;
++      expect(card.querySelector('.metric-value')).toHaveTextContent(String(current));
++      expect(card.querySelector('.metric-foot')).toHaveTextContent(expected);
++      if (previous === 0) expect(card.querySelector('.metric-foot')).not.toHaveTextContent('%');
++    }
++    const row = screen.getByRole('cell', { name: 'fixture.example.test' }).closest('tr')!;
++    expect(row.cells[1]).toHaveTextContent(String(current));
++    expect(row.cells[2]).toHaveTextContent(String(previous));
++    expect(row.cells[3]).toHaveTextContent(expected);
++  }
++  expect(JSON.stringify(data)).toBe(original);
++});
+--- a/src/components/liekan/features/geo-weight.test.tsx
++++ b/src/components/liekan/features/geo-weight.test.tsx
+@@ -522,3 +522,27 @@
+     expect(screen.queryByText('暂无权重')).not.toBeInTheDocument();
+   });
+ });
++
++it.each(['zh-CN', 'en-US'] as const)(
++  'describes missing GEO evidence as window-scoped when today is outside the snapshot in %s',
++  locale => {
++    // Synthetic same-day input is beyond the saved window; it cannot establish a score.
++    const sameDayLogAt = Date.parse('2026-10-21T01:00:00Z');
++    const before = JSON.stringify(h.data.current);
++    expect(sameDayLogAt).toBeGreaterThanOrEqual(h.data.current.endAt);
++    render(
++      <LiekanLocaleContext.Provider value={locale}>
++        <GeoWeightSummary {...props} endAt={Date.parse('2026-10-21T15:59:59Z')} />
++      </LiekanLocaleContext.Provider>,
++    );
++    const label = locale === 'zh-CN' ? '观察窗口无日志' : 'No logs in the observation window';
++    expect(screen.getByText(label)).toBeVisible();
++    expect(screen.queryByText(locale === 'zh-CN' ? '待接入日志' : 'Logs not connected')).not.toBeInTheDocument();
++    fireEvent.click(screen.getByRole('button', {
++      name: locale === 'zh-CN' ? '查看 GEO 权重计算依据' : 'View GEO weight calculation evidence',
++    }));
++    expect(within(screen.getByRole('dialog')).getAllByText(label).length).toBeGreaterThan(0);
++    expect(h.data.current).toMatchObject({ state: 'missing', level: null, weightedUnits: null, asOf: '2026-10-20' });
++    expect(JSON.stringify(h.data.current)).toBe(before);
++  },
++);
