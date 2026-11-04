@@ -1,0 +1,125 @@
+--- a/src/lib/liekan/i18n/messages/en-US.json
++++ b/src/lib/liekan/i18n/messages/en-US.json
+@@ -5118,5 +5118,10 @@
+   "himax-observation-clarity-5": "No matching records were found in connected logs for the selected period and filters. This does not mean these pages have never been crawled.",
+   "himax-observation-clarity-6": "Check page accessibility, robots, sitemaps and internal links first. Keep monitoring healthy pages and improve content using real customer questions and verifiable evidence.",
+   "himax-observation-clarity-7": "Logs may not cover the full date range. A matching crawler name does not verify its identity, and crawling does not establish indexing or AI citations.",
+-  "himax-observation-clarity-8": "Observed paths may include resources such as robots.txt and sitemap.xml. The unobserved list contains imported catalog pages only; the denominators differ."
++  "himax-observation-clarity-8": "Observed paths may include resources such as robots.txt and sitemap.xml. The unobserved list contains imported catalog pages only; the denominators differ.",
++  "himax-conversion-clarity-1": "Top conversion goal",
++  "himax-conversion-clarity-2": "Download goal events",
++  "himax-conversion-clarity-3": "Only goals with recorded conversions are compared; these are not qualified inquiries.",
++  "himax-conversion-clarity-4": "Download goal: {v0}. Counts goal events, not completed downloads.",
++  "himax-conversion-clarity-5": "No download goal configured"
+ }
+--- a/src/lib/liekan/i18n/messages/zh-CN.json
++++ b/src/lib/liekan/i18n/messages/zh-CN.json
+@@ -5118,5 +5118,10 @@
+   "himax-observation-clarity-5": "仅表示所选时间与筛选条件内，已接入日志没有匹配记录，不代表这些页面从未被抓取。",
+   "himax-observation-clarity-6": "先检查页面可访问性、robots、站点地图与内链；技术正常的页面继续观察，并根据真实客户问题补充有依据的内容。",
+   "himax-observation-clarity-7": "日志可能未覆盖完整日期范围；爬虫名称匹配不等于已验证身份，抓取也不等于索引或 AI 引用。",
+-  "himax-observation-clarity-8": "请求路径可包含 robots.txt、sitemap.xml 等资源；未观测清单仅统计已导入目录页，两者分母不同。"
++  "himax-observation-clarity-8": "请求路径可包含 robots.txt、sitemap.xml 等资源；未观测清单仅统计已导入目录页，两者分母不同。",
++  "himax-conversion-clarity-1": "转化目标 TOP1",
++  "himax-conversion-clarity-2": "下载目标次数",
++  "himax-conversion-clarity-3": "仅比较有记录的转化目标；不代表有效询盘",
++  "himax-conversion-clarity-4": "下载目标：{v0}；记录目标事件，不代表下载完成",
++  "himax-conversion-clarity-5": "未配置下载目标"
+ }
+--- a/src/components/liekan/pages/Conversions.tsx
++++ b/src/components/liekan/pages/Conversions.tsx
+@@ -23,12 +23,14 @@
+         />
+         <MetricCard
+           label="转化页 TOP1"
++          displayLabel="转化目标 TOP1"
+           className="card p-4 fade-in d1"
+           valueClass="num text-[24px] font-bold text-brand mt-1.5"
+           report={report}
+         />
+         <MetricCard
+           label="白皮书下载"
++          displayLabel="下载目标次数"
+           className="card p-4 fade-in d1"
+           valueClass="num text-[24px] font-bold text-brand mt-1.5"
+           report={report}
+--- a/src/lib/liekan/report.test.ts
++++ b/src/lib/liekan/report.test.ts
+@@ -1305,3 +1305,46 @@
+   expect(actual.charts.d1.series[0].values).toEqual([null]);
+   expect(actual.charts.d1.series[1].values).toEqual([5]);
+ });
++
++
++describe('configured conversion goal cards', () => {
++  const conversionCard = (report: Awaited<ReturnType<typeof buildReport>>, label: string) =>
++    report.cards.find(card => card.label === label);
++  it('does not declare a winner when all configured goals have zero observations', async () => {
++    const human = await mocks.human();
++    mocks.human.mockResolvedValue({ ...human, goals: [
++      { id: 'contact', name: '联系入口打开（微转化）', path: 'contact_open', count: 0, convertedSessions: 0 },
++      { id: 'template', name: '模板下载点击（微转化）', path: 'template_download_click', count: 0, convertedSessions: 0 },
++    ] });
++    const report = await buildReport(website, false, { ...params, resource: 'conversions' });
++    expect(conversionCard(report, '转化页 TOP1')).toMatchObject({ value: null, state: 'empty' });
++    expect(conversionCard(report, '白皮书下载')).toMatchObject({ value: 0, state: 'available' });
++  });
++  it('uses the goal name and exact configured template event without inflating or combining counts', async () => {
++    const human = await mocks.human();
++    mocks.human.mockResolvedValue({ ...human, goals: [
++      { id: 'contact', name: '联系入口打开（微转化）', path: 'contact_open', count: 5, convertedSessions: 2 },
++      { id: 'legacy', name: 'download whitepaper', path: 'old_download', count: 4, convertedSessions: 2 },
++      { id: 'template', name: '资料领取', path: 'template_download_click', count: 3, convertedSessions: 1 },
++    ] });
++    const report = await buildReport(website, false, { ...params, resource: 'conversions' });
++    expect(conversionCard(report, '转化页 TOP1')).toMatchObject({ value: '联系入口打开（微转化）', state: 'available' });
++    expect(conversionCard(report, '白皮书下载')).toMatchObject({ value: 3, state: 'available' });
++    expect(conversionCard(report, '白皮书下载')?.detail).toContain('资料领取');
++    expect(conversionCard(report, '全站转化率')).toMatchObject({ value: null, state: 'empty' });
++  });
++  it('distinguishes an unconfigured download goal from a measured zero', async () => {
++    const human = await mocks.human();
++    mocks.human.mockResolvedValue({ ...human, goals: [
++      { id: 'contact', name: '联系入口打开（微转化）', path: 'contact_open', count: 0, convertedSessions: 0 },
++    ] });
++    const report = await buildReport(website, false, { ...params, resource: 'conversions' });
++    expect(conversionCard(report, '白皮书下载')).toMatchObject({ value: null, state: 'not_connected' });
++  });
++  it('translates both display labels and goal-specific evidence without a Chinese fallback', () => {
++    expect(translateSystemText('转化目标 TOP1', 'en-US')).toBe('Top conversion goal');
++    expect(translateSystemText('下载目标次数', 'en-US')).toBe('Download goal events');
++    expect(translateSystemText('下载目标：Template request；记录目标事件，不代表下载完成', 'en-US'))
++      .toBe('Download goal: Template request. Counts goal events, not completed downloads.');
++  });
++});
+--- a/src/lib/liekan/report.ts
++++ b/src/lib/liekan/report.ts
+@@ -1056,8 +1056,26 @@
+     '%',
+     t.visits ? '去重转化会话 ÷ 浏览会话' : '浏览会话为零，转化率无定义',
+   );
+-  card('转化页 TOP1', [...h.goals].sort((a, b) => b.count - a.count)[0]?.path ?? null, goalState);
+-  card('白皮书下载', h.goals.find(g => /白皮书|download/i.test(g.name))?.count ?? null, goalState);
++  const topGoal = [...h.goals].filter(g => g.count > 0).sort((a, b) => b.count - a.count)[0];
++  card(
++    '转化页 TOP1',
++    topGoal?.name ?? null,
++    topGoal ? goalState : h.goals.length ? 'empty' : 'not_connected',
++    '',
++    '仅比较有记录的转化目标；不代表有效询盘',
++  );
++  // Keep the legacy metric key, but recognize configured download events as well as goal names.
++  const downloadGoal = h.goals.find(g => g.path === 'template_download_click') ??
++    h.goals.find(g => /白皮书|下载|download/i.test(g.name));
++  card(
++    '白皮书下载',
++    downloadGoal?.count ?? null,
++    downloadGoal ? goalState : 'not_connected',
++    '',
++    downloadGoal
++      ? `下载目标：${downloadGoal.name}；记录目标事件，不代表下载完成`
++      : '未配置下载目标',
++  );
+   card('日志处理能力', null, 'unsupported', '', '单批 10 MiB / 10000 行；吞吐量待压测');
+   card('今日已解析', l.latest ? todayLogs.accepted : null, logState, '', '今日导入的有效日志行数');
+   card('蜘蛛识别规则', settings.rules.length, 'available');

@@ -1,0 +1,168 @@
+--- a/src/components/liekan/pages/AiPages.tsx
++++ b/src/components/liekan/pages/AiPages.tsx
+@@ -69,6 +69,7 @@
+         />
+         <MetricCard
+           label="平均抓取深度"
++          displayLabel="已观测页面的站内链接深度"
+           className="card p-4 fade-in d1"
+           valueClass="num text-[24px] font-bold text-brand mt-1.5"
+           report={report}
+@@ -76,6 +77,7 @@
+       </section>
+       <p className="text-[12px] text-sub leading-relaxed">
+         {i18n.text('请求路径可包含 robots.txt、sitemap.xml 等资源；未观测清单仅统计已导入目录页，两者分母不同。')}
++        {' '}{i18n.text('链接深度为已观测且有目录元数据的页面从首页出发的最短链接距离均值，不是爬虫实际行走轨迹。')}
+       </p>
+       <section className="card fade-in d2 overflow-hidden">
+         <div className="px-6 py-4 border-b border-line flex crawler-page-controls items-center justify-between gap-3">
+--- a/src/lib/liekan/i18n/messages/en-US.json
++++ b/src/lib/liekan/i18n/messages/en-US.json
+@@ -5123,5 +5123,14 @@
+   "himax-conversion-clarity-2": "Download goal events",
+   "himax-conversion-clarity-3": "Only goals with recorded conversions are compared; these are not qualified inquiries.",
+   "himax-conversion-clarity-4": "Download goal: {v0}. Counts goal events, not completed downloads.",
+-  "himax-conversion-clarity-5": "No download goal configured"
++  "himax-conversion-clarity-5": "No download goal configured",
++  "himax-installation-clarity-1": "Received {v0} imported log records.",
++  "himax-installation-clarity-2": "Latest import: {v0} ({v1}).",
++  "himax-installation-clarity-3": "The latest import time is unavailable.",
++  "himax-installation-clarity-4": "No built-in automatic source is configured. Received imports remain available for analytics. Manual uploads and external collectors can use the import API; browser visits require separate verification.",
++  "himax-installation-clarity-5": "Built-in automatic source",
++  "himax-installation-clarity-6": "Not configured; imported logs received",
++  "himax-installation-clarity-7": "Log imports (manual or external collector)",
++  "himax-installation-clarity-8": "Internal link depth of observed pages",
++  "himax-installation-clarity-9": "Link depth is the mean shortest link distance from the homepage for observed pages with catalog metadata, not the crawler’s actual traversal."
+ }
+--- a/src/lib/liekan/i18n/messages/zh-CN.json
++++ b/src/lib/liekan/i18n/messages/zh-CN.json
+@@ -5123,5 +5123,14 @@
+   "himax-conversion-clarity-2": "下载目标次数",
+   "himax-conversion-clarity-3": "仅比较有记录的转化目标；不代表有效询盘",
+   "himax-conversion-clarity-4": "下载目标：{v0}；记录目标事件，不代表下载完成",
+-  "himax-conversion-clarity-5": "未配置下载目标"
++  "himax-conversion-clarity-5": "未配置下载目标",
++  "himax-installation-clarity-1": "已收到 {v0} 条导入日志。",
++  "himax-installation-clarity-2": "最近导入：{v0}（{v1}）。",
++  "himax-installation-clarity-3": "最近导入时间未提供。",
++  "himax-installation-clarity-4": "未配置原生自动来源；已收到的导入日志仍可用于统计。手动上传与外部采集程序均可写入导入接口，浏览器访问需单独验证。",
++  "himax-installation-clarity-5": "原生自动来源",
++  "himax-installation-clarity-6": "未配置；已有导入日志",
++  "himax-installation-clarity-7": "导入日志（手动或外部采集）",
++  "himax-installation-clarity-8": "已观测页面的站内链接深度",
++  "himax-installation-clarity-9": "链接深度为已观测且有目录元数据的页面从首页出发的最短链接距离均值，不是爬虫实际行走轨迹。"
+ }
+--- a/src/components/liekan/features/Installation.test.tsx
++++ b/src/components/liekan/features/Installation.test.tsx
+@@ -2,7 +2,7 @@
+ import { describe, expect, it } from 'vitest';
+ import { LiekanLocaleContext } from '@/lib/liekan/i18n/client';
+ import type { InstallationIdentityObservation } from '@/lib/liekan/contracts/installation';
+-import { IdentityObservation } from './Installation';
++import { IdentityObservation, ImportedLogReceipt } from './Installation';
+ 
+ const base: InstallationIdentityObservation = {
+   version: 'received-browser-identity-v1',
+@@ -131,3 +131,32 @@
+     expect(container.textContent).not.toContain('40%');
+   });
+ });
++
++
++describe.each(['zh-CN', 'en-US'] as const)('import receipts without native sources in %s', locale => {
++  const receipt = (total = 1234, latestImportAt: string | null = '2025-01-01T13:14:45Z', demo = false) =>
++    render(<LiekanLocaleContext.Provider value={locale}>
++      <ImportedLogReceipt timezone="Asia/Shanghai" status={{
++        logs: { total, ai: 7, latestAt: null, latestImportAt, demo }, sources: [],
++      }} />
++    </LiekanLocaleContext.Provider>);
++  it('shows actual imported records and import time without claiming browser or native-source connection', () => {
++    const { container } = receipt();
++    expect(container.textContent).toContain('1,234');
++    expect(container.textContent).toContain('21:14:45');
++    expect(container.textContent).toContain('Asia/Shanghai');
++    expect(container.textContent).toContain(locale === 'zh-CN' ? '浏览器访问需单独验证' : 'browser visits require separate verification');
++    expect(container.textContent).toContain(locale === 'zh-CN' ? '未配置原生自动来源' : 'No built-in automatic source is configured');
++    expect(container.textContent).not.toContain(locale === 'zh-CN' ? '接入设置已保存' : 'Integration settings saved');
++    if (locale === 'en-US') expect(container.textContent).not.toMatch(/[\u3400-\u9fff]/);
++  });
++  it('does not invent a timestamp when the receipt does not provide one', () => {
++    const { container } = receipt(1, null);
++    expect(container.textContent).toContain(locale === 'zh-CN' ? '最近导入时间未提供' : 'latest import time is unavailable');
++    expect(container.textContent).not.toContain('1970');
++  });
++  it.each([[0, false], [3, true]])('does not present zero or demo records as actual integration evidence (%s, %s)', (total, demo) => {
++    const { container } = receipt(total as number, null, demo as boolean);
++    expect(container.textContent).toBe('');
++  });
++});
+--- a/src/components/liekan/features/Installation.tsx
++++ b/src/components/liekan/features/Installation.tsx
+@@ -190,6 +190,25 @@
+   );
+ }
+ 
++export function ImportedLogReceipt({ status, timezone }: {
++  status: Pick<InstallationStatus, 'logs' | 'sources'>;
++  timezone: string;
++}) {
++  const i18n = useLiekanI18n();
++  if (status.logs.demo || status.logs.total <= 0) return null;
++  return (
++    <div className="field-help" role="status">
++      <p>{i18n.text('已收到 {v0} 条导入日志。', [status.logs.total.toLocaleString()])}</p>
++      <p>{status.logs.latestImportAt
++        ? i18n.text('最近导入：{v0}（{v1}）。', [dateLabel(status.logs.latestImportAt, timezone), timezone])
++        : i18n.text('最近导入时间未提供。')}</p>
++      {!status.sources?.length && <p>{i18n.text(
++        '未配置原生自动来源；已收到的导入日志仍可用于统计。手动上传与外部采集程序均可写入导入接口，浏览器访问需单独验证。',
++      )}</p>}
++    </div>
++  );
++}
++
+ export function InstallationEntry({ site, browser }: { site: FeatureEntity; browser: any }) {
+   const i18n = useLiekanI18n();
+   const c = useFeature();
+@@ -242,6 +261,7 @@
+             </div>
+           )}
+         </QueryState>
++        {status && <ImportedLogReceipt status={status} timezone={c.range.timezone || 'Asia/Shanghai'} />}
+         {status?.logs.demo && <Notice tone="amber">{i18n.system(demoCopy)}</Notice>}
+         {status?.identityIngress && (
+           <Notice tone="amber">
+@@ -493,6 +513,7 @@
+       <QueryState query={query}>
+         {status && (
+           <>
++            <ImportedLogReceipt status={status} timezone={timezone} />
+             {!canSave && (
+               <Notice tone="amber">
+                 {i18n.text('当前角色可查看安装说明。保存接入进度需要网站管理权限。')}
+@@ -788,10 +809,12 @@
+                       [i18n.text('网站'), `${site.name} · ${site.domain}`],
+                       [i18n.text('日志接入方式'), i18n.system(logMethodLabels[method])],
+                       [
+-                        i18n.text('自动接入'),
++                        i18n.text('原生自动来源'),
+                         status.sources?.some(source => source.primary)
+                           ? i18n.text('主要来源已配置')
+-                          : i18n.text('等待连接'),
++                          : !status.logs.demo && status.logs.total > 0
++                            ? i18n.text('未配置；已有导入日志')
++                            : i18n.text('等待连接'),
+                       ],
+                     ]}
+                   />
+--- a/src/lib/liekan/contracts/installation.ts
++++ b/src/lib/liekan/contracts/installation.ts
+@@ -135,7 +135,7 @@
+ export const logMethodLabels: Record<LogMethod, string> = {
+   cloudflare: 'Cloudflare 授权连接',
+   server: '服务器一次安装',
+-  manual: '手动导入日志',
++  manual: '导入日志（手动或外部采集）',
+ };
+ export function initialInstallationProgress(): InstallationProgress {
+   return {

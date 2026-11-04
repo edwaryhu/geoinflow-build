@@ -19,7 +19,15 @@
     },
     {
       "path": "patches/internal-check-exclusion.patch",
-      "sha256": "89237983f47b27aff05ce8583c5445cbb1dd116fd1efe8e4b6f146aaf01fb704"
+      "sha256": "8ec297acdb50ace00ae253d9a557ba9129638087c19b5bcf39e81e98472f3c7a"
+    },
+    {
+      "path": "patches/conversion-display.patch",
+      "sha256": "c7d4876cb3e56f687790ed7da94ecec371067f83ddbdf4e652f9d9a23f498f0b"
+    },
+    {
+      "path": "patches/installation-clarity.patch",
+      "sha256": "98ffb484e1a04273bc7b65c6a29d666e868563f98dac8866a0d092928b9d5f18"
     }
   ],
   "test_files": [
@@ -36,9 +44,11 @@
     "src/lib/liekan/contracts/vercel-history.test.ts",
     "src/lib/liekan/upstream/vercel-history.test.ts",
     "src/lib/liekan/upstream/logs.internal-check.test.ts",
-    "src/lib/liekan/upstream/logs.test.ts"
+    "src/lib/liekan/upstream/logs.test.ts",
+    "src/lib/liekan/report.test.ts",
+    "src/components/liekan/features/Installation.test.tsx"
   ],
-  "minimum_passed_tests": 139,
+  "minimum_passed_tests": 198,
   "required_skipped_tests": 0,
   "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots.",
   "integration_tests": {

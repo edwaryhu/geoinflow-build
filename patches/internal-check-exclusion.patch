@@ -38,6 +38,18 @@
        abnormal: 2,
        coverage: { manifests: 0, rawFallback: true },
      });
+@@ -718,9 +727,9 @@
+     expect(partial).toMatchObject({ requests: raw.requests, abnormal: raw.abnormal });
+     expect(partial.coverage.manifests).toBeGreaterThan(0);
+     const { getLogToday } = await import('./logs');
+-    expect(await getLogToday(site, from, end)).toEqual({ requests: 7, abnormal: 2, accepted: 91 });
++    expect(await getLogToday(site, from, end)).toEqual({ requests: 6, abnormal: 2, accepted: 91 });
+     await finish(await shortLogBuild(new Date('2026-01-01T00:05Z'), new Date('2026-01-01T00:15Z')));
+-    expect(await api.readAnalysisLogToday(todayInput)).toMatchObject({ requests: 7, abnormal: 2 });
++    expect(await api.readAnalysisLogToday(todayInput)).toMatchObject({ requests: 6, abnormal: 2 });
+     for (const [startDate, endDate] of [
+       [from, new Date('2026-01-01T00:05Z')],
+       [new Date('2026-01-01T00:05Z'), new Date('2026-01-01T00:05Z')],
 --- a/src/lib/liekan/upstream/analysis-rollups.ts
 +++ b/src/lib/liekan/upstream/analysis-rollups.ts
 @@ -183,7 +183,7 @@
@@ -84,57 +96,6 @@
          GROUP BY 1,2,3 ORDER BY 1,2,3`,
          input.websiteId,
          input.startDate,
---- /dev/null
-+++ b/src/lib/liekan/upstream/logs.internal-check.test.ts
-@@ -0,0 +1,48 @@
-+import { beforeEach, describe, expect, it, vi } from 'vitest';
-+vi.mock('./server', () => ({ query: vi.fn(), LiekanError: class extends Error {} }));
-+vi.mock('./analysis-rollups', () => ({
-+  readAnalysisLogRollup: vi.fn(async () => null),
-+  readAnalysisLogSeries: vi.fn(async () => null),
-+  readAnalysisLogToday: vi.fn(async () => null),
-+}));
-+import { getContentImpact, getLogFacts, getLogToday, getMonthlyAiShare, getPlotLogs } from './logs';
-+import { query } from './server';
-+const start = new Date('2026-11-01T00:00:00Z'), end = new Date('2026-11-04T13:00:00Z');
-+const exclude = "user_agent NOT LIKE 'Liekan-Crawler-Check/%'";
-+beforeEach(() => { vi.clearAllMocks(); vi.mocked(query).mockReset().mockResolvedValue([]); });
-+describe.each([undefined, 1] as const)('internal checks, metric version %s', version => {
-+  const metrics = { crawlerIdentityScope: 'all' as const, crawlerMetricsVersion: version };
-+  it('excludes explicit diagnostics from AI-page aggregates without changing the time boundary', async () => {
-+    await getLogFacts('site', start, end, 'Asia/Shanghai', 1, '', '', '', 'after',
-+      ['summary', 'daily', 'bots', 'pages', 'statuses', 'hours'], { ...metrics, resource: 'ai/pages' });
-+    const [sql, site, from, until] = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('WITH statistics_scope'))!;
-+    expect(sql).toContain(exclude);
-+    expect(sql).toContain(version === 1 ? 'created_at < $3::timestamptz' : 'created_at BETWEEN $2::timestamptz AND $3::timestamptz');
-+    expect(sql).toContain("COALESCE(ai_eligible,bot_type IN ('训练','搜索','用户触发'))");
-+    expect([site, from, until]).toEqual(['site', start, end]);
-+  });
-+  it('excludes diagnostics from both content-impact windows and preserves their seven-day bounds', async () => {
-+    vi.mocked(query).mockResolvedValueOnce([{ path: '/about', publishedAt: start }]);
-+    await getContentImpact('site', start, end, metrics);
-+    const sql = vi.mocked(query).mock.calls[1][0];
-+    expect(sql.split(exclude)).toHaveLength(3);
-+    expect(sql).toContain(`l.created_at>=c."publishedAt" AND l.created_at<c."publishedAt"+interval '7 days'`);
-+    expect(sql).toContain(`l.created_at>=c."publishedAt"-interval '7 days' AND l.created_at<c."publishedAt"`);
-+  });
-+  it('excludes diagnostics from month/day/hour series in raw fallback', async () => {
-+    await getMonthlyAiShare('site', end, 'Asia/Shanghai', metrics);
-+    for (const hour of [false, true]) await getPlotLogs('site', start, end, 'Asia/Shanghai', hour, metrics);
-+    const scans = vi.mocked(query).mock.calls.filter(([sql]) => sql.includes('FROM liekan_reporting_log'));
-+    expect(scans).toHaveLength(3);
-+    for (const [sql] of scans) expect(sql).toContain(exclude);
-+    expect(scans[0][0]).toContain(version === 1 ? 'created_at<$2' : 'created_at<=$2');
-+    expect(scans[1][0]).toContain(version === 1 ? 'created_at>=$2 AND created_at<$3' : 'created_at BETWEEN $2 AND $3');
-+  });
-+});
-+it('excludes diagnostic requests from today but preserves the raw accepted-import count', async () => {
-+  vi.mocked(query).mockImplementation(async sql => sql.includes('sum(accepted)') ? [{ accepted: 3 }] : [{ requests: 2, abnormal: 0 }]);
-+  expect(await getLogToday('site', start, end)).toEqual({ requests: 2, abnormal: 0, accepted: 3 });
-+  const [sql] = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('FROM liekan_reporting_log'))!;
-+  expect(sql).toContain(exclude);
-+  expect(sql).toContain('created_at BETWEEN $2 AND $3');
-+});
 --- a/src/lib/liekan/upstream/logs.ts
 +++ b/src/lib/liekan/upstream/logs.ts
 @@ -43,10 +43,12 @@
@@ -199,3 +160,54 @@
      id,
      start,
      end,
+--- /dev/null
++++ b/src/lib/liekan/upstream/logs.internal-check.test.ts
+@@ -0,0 +1,48 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++vi.mock('./server', () => ({ query: vi.fn(), LiekanError: class extends Error {} }));
++vi.mock('./analysis-rollups', () => ({
++  readAnalysisLogRollup: vi.fn(async () => null),
++  readAnalysisLogSeries: vi.fn(async () => null),
++  readAnalysisLogToday: vi.fn(async () => null),
++}));
++import { getContentImpact, getLogFacts, getLogToday, getMonthlyAiShare, getPlotLogs } from './logs';
++import { query } from './server';
++const start = new Date('2026-11-01T00:00:00Z'), end = new Date('2026-11-04T13:00:00Z');
++const exclude = "user_agent NOT LIKE 'Liekan-Crawler-Check/%'";
++beforeEach(() => { vi.clearAllMocks(); vi.mocked(query).mockReset().mockResolvedValue([]); });
++describe.each([undefined, 1] as const)('internal checks, metric version %s', version => {
++  const metrics = { crawlerIdentityScope: 'all' as const, crawlerMetricsVersion: version };
++  it('excludes explicit diagnostics from AI-page aggregates without changing the time boundary', async () => {
++    await getLogFacts('site', start, end, 'Asia/Shanghai', 1, '', '', '', 'after',
++      ['summary', 'daily', 'bots', 'pages', 'statuses', 'hours'], { ...metrics, resource: 'ai/pages' });
++    const [sql, site, from, until] = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('WITH statistics_scope'))!;
++    expect(sql).toContain(exclude);
++    expect(sql).toContain(version === 1 ? 'created_at < $3::timestamptz' : 'created_at BETWEEN $2::timestamptz AND $3::timestamptz');
++    expect(sql).toContain("COALESCE(ai_eligible,bot_type IN ('训练','搜索','用户触发'))");
++    expect([site, from, until]).toEqual(['site', start, end]);
++  });
++  it('excludes diagnostics from both content-impact windows and preserves their seven-day bounds', async () => {
++    vi.mocked(query).mockResolvedValueOnce([{ path: '/about', publishedAt: start }]);
++    await getContentImpact('site', start, end, metrics);
++    const sql = vi.mocked(query).mock.calls[1][0];
++    expect(sql.split(exclude)).toHaveLength(3);
++    expect(sql).toContain(`l.created_at>=c."publishedAt" AND l.created_at<c."publishedAt"+interval '7 days'`);
++    expect(sql).toContain(`l.created_at>=c."publishedAt"-interval '7 days' AND l.created_at<c."publishedAt"`);
++  });
++  it('excludes diagnostics from month/day/hour series in raw fallback', async () => {
++    await getMonthlyAiShare('site', end, 'Asia/Shanghai', metrics);
++    for (const hour of [false, true]) await getPlotLogs('site', start, end, 'Asia/Shanghai', hour, metrics);
++    const scans = vi.mocked(query).mock.calls.filter(([sql]) => sql.includes('FROM liekan_reporting_log'));
++    expect(scans).toHaveLength(3);
++    for (const [sql] of scans) expect(sql).toContain(exclude);
++    expect(scans[0][0]).toContain(version === 1 ? 'created_at<$2' : 'created_at<=$2');
++    expect(scans[1][0]).toContain(version === 1 ? 'created_at>=$2 AND created_at<$3' : 'created_at BETWEEN $2 AND $3');
++  });
++});
++it('excludes diagnostic requests from today but preserves the raw accepted-import count', async () => {
++  vi.mocked(query).mockImplementation(async sql => sql.includes('sum(accepted)') ? [{ accepted: 3 }] : [{ requests: 2, abnormal: 0 }]);
++  expect(await getLogToday('site', start, end)).toEqual({ requests: 2, abnormal: 0, accepted: 3 });
++  const [sql] = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('FROM liekan_reporting_log'))!;
++  expect(sql).toContain(exclude);
++  expect(sql).toContain('created_at BETWEEN $2 AND $3');
++});
