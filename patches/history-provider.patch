@@ -38,8 +38,8 @@
 +const SITE_B = '22222222-2222-4222-8222-222222222222';
 +function fixture(websiteId = SITE_A, pageviews = 3): VercelHistoryResponse {
 +  return { state: 'available', snapshot: {
-+    version: 1, websiteId, provider: 'Vercel Web Analytics', projectId: 'prj_synthetic_test',
-+    hostname: 'example.test', environment: 'production', timezone: 'UTC',
++    version: 1, websiteId, provider: 'Vercel Web Analytics', projectId: 'prj_synthetictest',
++    hostname: 'himaxtec.com', environment: 'production', timezone: 'UTC',
 +    startAt: '2026-10-01T00:00:00Z', endAt: '2026-10-08T00:00:00Z',
 +    collectedAt: '2026-10-08T12:00:00Z', pageviews,
 +    paths: [{ label: '/', pageviews }], referrers: [{ label: '', pageviews }],

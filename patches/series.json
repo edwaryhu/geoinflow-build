@@ -31,7 +31,7 @@
     },
     {
       "path": "patches/history-provider.patch",
-      "sha256": "e4f223d6ba758611094b894bfa93175d39b15bf806808c0ff08cac232351831f"
+      "sha256": "fdbead68a1aa10e610586807e76275b122e2a7ab1d85d0c0a54ac43cc13b218e"
     },
     {
       "path": "patches/identity-weight-compare.patch",
