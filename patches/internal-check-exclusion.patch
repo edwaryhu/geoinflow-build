@@ -1,0 +1,201 @@
+--- a/src/lib/liekan/upstream/analysis-rollups.integration.test.ts
++++ b/src/lib/liekan/upstream/analysis-rollups.integration.test.ts
+@@ -617,11 +617,19 @@
+     await log('2026-01-01T00:03:00Z');
+     await log('2026-01-01T00:08:00Z', { verification: 'verified_dns', path: '/space%20here' });
+     await log('2026-01-02T00:03:00Z', { ai: null, state: null });
+-    await log('2026-01-01T01:00:00Z', { selfCheck: true });
++    await log('2026-01-01T01:00:00Z', { selfCheck: true, path: '/synthetic-only' });
+     await log('2026-01-03T00:00:00Z', { path: '/inclusive' });
+     const raw = await api.readAnalysisLogRollup(input());
+     const rawSeries = await api.readAnalysisLogSeries({ ...input(), grain: 'hour' });
+     const legacy = await api.readAnalysisLogRollup(input({ crawlerMetricsVersion: undefined }));
++    expect(legacy.summary.requests).toBe(4); // Inclusive endpoint retained; self-check excluded.
++    expect(raw.pages.some(row => row.path === '/synthetic-only')).toBe(false);
++    expect(legacy.pages.some(row => row.path === '/synthetic-only')).toBe(false);
++    const [retained] = await q<{ count: bigint }[]>("SELECT count(*) AS count FROM liekan_log WHERE website_id=$1::uuid AND user_agent LIKE 'Liekan-Crawler-Check/%'", site);
++    expect(retained.count).toBe(1n);
++    expect(legacy.pages.some(row => row.path === '/inclusive')).toBe(true);
++    const legacySeries = await api.readAnalysisLogSeries({ ...input({ crawlerMetricsVersion: undefined }), grain: 'hour' });
++    expect(legacySeries.reduce((sum, row) => sum + row.count, 0)).toBe(4);
+     const dns = await api.readAnalysisLogRollup(
+       input({ crawlerIdentityScope: 'verified_identity' }),
+     );
+@@ -669,6 +677,7 @@
+     expect(rawScans.every(node => node['Actual Loops'] === 0)).toBe(true);
+ 
+     expect(await api.readAnalysisLogSeries({ ...input(), grain: 'hour' })).toEqual(rawSeries);
++    expect(await api.readAnalysisLogSeries({ ...input({ crawlerMetricsVersion: undefined }), grain: 'hour' })).toEqual(legacySeries);
+     const limited = await api.readAnalysisLogRollup({ ...input(), fields: ['hours'] });
+     expect(limited.hours).toEqual(accelerated.hours);
+     expect(limited.bots).toBeUndefined();
+@@ -709,7 +718,7 @@
+     const todayInput = { websiteId: site, startDate: from, endDate: end };
+     const raw = await api.readAnalysisLogToday({ ...todayInput, allowRawOnly: true });
+     expect(raw).toMatchObject({
+-      requests: 7,
++      requests: 6,
+       abnormal: 2,
+       coverage: { manifests: 0, rawFallback: true },
+     });
+--- a/src/lib/liekan/upstream/analysis-rollups.ts
++++ b/src/lib/liekan/upstream/analysis-rollups.ts
+@@ -183,7 +183,7 @@
+ const identity = `($8='all' OR ($8='verified_range' AND verification='verified_range') OR ($8='verified_identity' AND verification IN('verified_range','verified_dns','verified_edge')))`;
+ const forms = `($9::text IS NULL OR product_form=$9) AND ($10::text IS NULL OR (bot_type NOT IN('训练','搜索','用户触发','传统搜索') AND coalesce(product_form,'unknown') NOT IN('workbench','personal_agent')))`;
+ 
+-/** Today keeps its inclusive endpoints and its complete reporting-log population. */
++/** Today keeps its inclusive endpoints; dedicated diagnostic requests are excluded. */
+ export async function readAnalysisLogToday(input: AnalysisVisitInput): Promise<{
+   requests: number;
+   abnormal: number;
+@@ -218,11 +218,13 @@
+           coalesce(sum(f.requests) FILTER(WHERE (f.dimensions->>'status')::int>=400),0) AS abnormal
+          FROM covered c JOIN liekan_analysis_log f ON f.website_id=c.website_id AND f.generation=c.generation
+           AND f.grain='5m' AND f.bucket>=c.bucket AND f.bucket<c.bucket_end
++         WHERE NOT (f.dimensions->>'selfCheck')::boolean
+          UNION ALL
+          SELECT count(*) FILTER(WHERE l.path !~* '${staticRequestExtensionPattern}'),count(*) FILTER(WHERE l.status>=400)
+          FROM raw_gaps g CROSS JOIN LATERAL (
+           SELECT l.path,l.status FROM liekan_reporting_log l
+-          WHERE l.website_id=$1::uuid AND l.created_at>=g.starts AND l.created_at<g.ends OFFSET 0
++          WHERE l.website_id=$1::uuid AND l.created_at>=g.starts AND l.created_at<g.ends
++           AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%' OFFSET 0
+          ) l
+         ) SELECT coalesce(sum(requests),0)::text AS requests,coalesce(sum(abnormal),0)::text AS abnormal,
+          (SELECT count(*)::text FROM covered) AS manifests,
+@@ -333,8 +335,8 @@
+          SELECT path,dimensions,count(*),min(created_at),max(created_at) FROM path_scope GROUP BY 1,2
+         ), low_flat AS (SELECT bucket,requests,first_at,last_at,${flattened} FROM low_facts),
+         path_flat AS (SELECT path,requests,first_at,last_at,${flattened} FROM path_facts),
+-        low AS MATERIALIZED (SELECT * FROM low_flat WHERE ${modern ? 'NOT self_check AND' : ''} ${identity}),
+-        paths AS MATERIALIZED (SELECT * FROM path_flat WHERE ${modern ? 'NOT self_check AND' : ''} ${identity})
++        low AS MATERIALIZED (SELECT * FROM low_flat WHERE NOT self_check AND ${identity}),
++        paths AS MATERIALIZED (SELECT * FROM path_flat WHERE NOT self_check AND ${identity})
+         SELECT
+         ${projections.length ? projections.join(',') + ',' : ''}
+         jsonb_build_object('manifests',(SELECT count(*)::text FROM covered),'rawFallback',NOT $7::boolean OR (SELECT coalesce(sum(extract(epoch FROM bucket_end-bucket)),0)<extract(epoch FROM $3::timestamptz-$2::timestamptz) FROM covered) ${needsPaths ? 'OR (SELECT coalesce(sum(extract(epoch FROM bucket_end-bucket)),0)<extract(epoch FROM $3::timestamptz-$2::timestamptz) FROM path_covered)' : ''}) AS coverage
+@@ -777,7 +779,7 @@
+         SELECT day,bot,bot_type AS type,sum(requests)::text AS count,
+           coalesce(sum(requests) FILTER(WHERE ${ai}),0)::text AS "aiRequests"
+         FROM series_facts CROSS JOIN (SELECT $7::boolean) parameter_types
+-        WHERE ${modern ? 'NOT self_check AND' : ''} ${identity}
++        WHERE NOT self_check AND ${identity}
+         GROUP BY 1,2,3 ORDER BY 1,2,3`,
+         input.websiteId,
+         input.startDate,
+--- /dev/null
++++ b/src/lib/liekan/upstream/logs.internal-check.test.ts
+@@ -0,0 +1,48 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++vi.mock('./server', () => ({ query: vi.fn(), LiekanError: class extends Error {} }));
++vi.mock('./analysis-rollups', () => ({
++  readAnalysisLogRollup: vi.fn(async () => null),
++  readAnalysisLogSeries: vi.fn(async () => null),
++  readAnalysisLogToday: vi.fn(async () => null),
++}));
++import { getContentImpact, getLogFacts, getLogToday, getMonthlyAiShare, getPlotLogs } from './logs';
++import { query } from './server';
++const start = new Date('2026-11-01T00:00:00Z'), end = new Date('2026-11-04T13:00:00Z');
++const exclude = "user_agent NOT LIKE 'Liekan-Crawler-Check/%'";
++beforeEach(() => { vi.clearAllMocks(); vi.mocked(query).mockReset().mockResolvedValue([]); });
++describe.each([undefined, 1] as const)('internal checks, metric version %s', version => {
++  const metrics = { crawlerIdentityScope: 'all' as const, crawlerMetricsVersion: version };
++  it('excludes explicit diagnostics from AI-page aggregates without changing the time boundary', async () => {
++    await getLogFacts('site', start, end, 'Asia/Shanghai', 1, '', '', '', 'after',
++      ['summary', 'daily', 'bots', 'pages', 'statuses', 'hours'], { ...metrics, resource: 'ai/pages' });
++    const [sql, site, from, until] = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('WITH statistics_scope'))!;
++    expect(sql).toContain(exclude);
++    expect(sql).toContain(version === 1 ? 'created_at < $3::timestamptz' : 'created_at BETWEEN $2::timestamptz AND $3::timestamptz');
++    expect(sql).toContain("COALESCE(ai_eligible,bot_type IN ('训练','搜索','用户触发'))");
++    expect([site, from, until]).toEqual(['site', start, end]);
++  });
++  it('excludes diagnostics from both content-impact windows and preserves their seven-day bounds', async () => {
++    vi.mocked(query).mockResolvedValueOnce([{ path: '/about', publishedAt: start }]);
++    await getContentImpact('site', start, end, metrics);
++    const sql = vi.mocked(query).mock.calls[1][0];
++    expect(sql.split(exclude)).toHaveLength(3);
++    expect(sql).toContain(`l.created_at>=c."publishedAt" AND l.created_at<c."publishedAt"+interval '7 days'`);
++    expect(sql).toContain(`l.created_at>=c."publishedAt"-interval '7 days' AND l.created_at<c."publishedAt"`);
++  });
++  it('excludes diagnostics from month/day/hour series in raw fallback', async () => {
++    await getMonthlyAiShare('site', end, 'Asia/Shanghai', metrics);
++    for (const hour of [false, true]) await getPlotLogs('site', start, end, 'Asia/Shanghai', hour, metrics);
++    const scans = vi.mocked(query).mock.calls.filter(([sql]) => sql.includes('FROM liekan_reporting_log'));
++    expect(scans).toHaveLength(3);
++    for (const [sql] of scans) expect(sql).toContain(exclude);
++    expect(scans[0][0]).toContain(version === 1 ? 'created_at<$2' : 'created_at<=$2');
++    expect(scans[1][0]).toContain(version === 1 ? 'created_at>=$2 AND created_at<$3' : 'created_at BETWEEN $2 AND $3');
++  });
++});
++it('excludes diagnostic requests from today but preserves the raw accepted-import count', async () => {
++  vi.mocked(query).mockImplementation(async sql => sql.includes('sum(accepted)') ? [{ accepted: 3 }] : [{ requests: 2, abnormal: 0 }]);
++  expect(await getLogToday('site', start, end)).toEqual({ requests: 2, abnormal: 0, accepted: 3 });
++  const [sql] = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('FROM liekan_reporting_log'))!;
++  expect(sql).toContain(exclude);
++  expect(sql).toContain('created_at BETWEEN $2 AND $3');
++});
+--- a/src/lib/liekan/upstream/logs.ts
++++ b/src/lib/liekan/upstream/logs.ts
+@@ -43,10 +43,12 @@
+     withLogStatisticsRead(() => query<T>(sql, ...params));
+   const timeCondition =
+     metrics.crawlerMetricsVersion === 1
+-      ? "created_at >= $2::timestamptz AND created_at < $3::timestamptz AND user_agent NOT LIKE 'Liekan-Crawler-Check/%'"
++      ? "created_at >= $2::timestamptz AND created_at < $3::timestamptz"
+       : 'created_at BETWEEN $2::timestamptz AND $3::timestamptz';
++  // Dedicated diagnostics are never organic crawler observations, including legacy reports.
++  const observationCondition = `${timeCondition} AND user_agent NOT LIKE 'Liekan-Crawler-Check/%'`;
+   const identityScope = crawlerIdentitySql(metrics.crawlerIdentityScope);
+-  const base = `FROM liekan_reporting_log WHERE website_id=$1::uuid AND ${timeCondition} AND $4::text IS NOT NULL${identityScope}`;
++  const base = `FROM liekan_reporting_log WHERE website_id=$1::uuid AND ${observationCondition} AND $4::text IS NOT NULL${identityScope}`;
+   const ai = ` AND ${crawlerAiSql()}`;
+   const unknown = unknownCrawlerSql();
+   const known = ` AND NOT ${unknown}`;
+@@ -314,7 +316,7 @@
+         ? await read(
+             withForms
+               ? formBots
+-              : `SELECT bot AS name,vendor,bot_type AS type,l.reporting_crawler_id AS "botId",count(*)::int AS requests FROM liekan_reporting_log l LEFT JOIN liekan_crawler_evidence e ON e.website_id=l.website_id AND e.log_id=l.id WHERE l.website_id=$1::uuid AND ${timeCondition}${identityScope} GROUP BY 1,2,3,4`,
++              : `SELECT bot AS name,vendor,bot_type AS type,l.reporting_crawler_id AS "botId",count(*)::int AS requests FROM liekan_reporting_log l LEFT JOIN liekan_crawler_evidence e ON e.website_id=l.website_id AND e.log_id=l.id WHERE l.website_id=$1::uuid AND ${observationCondition}${identityScope} GROUP BY 1,2,3,4`,
+             id,
+             previousStart,
+             previousEnd,
+@@ -331,7 +333,7 @@
+       covered =>
+         covered ||
+         query(
+-          `SELECT count(*) FILTER(WHERE path !~* '${staticRequestExtensionPattern}')::int AS requests,count(*) FILTER(WHERE status>=400)::int AS abnormal FROM liekan_reporting_log WHERE website_id=$1::uuid AND created_at BETWEEN $2 AND $3`,
++          `SELECT count(*) FILTER(WHERE path !~* '${staticRequestExtensionPattern}')::int AS requests,count(*) FILTER(WHERE status>=400)::int AS abnormal FROM liekan_reporting_log WHERE website_id=$1::uuid AND created_at BETWEEN $2 AND $3 AND user_agent NOT LIKE 'Liekan-Crawler-Check/%'`,
+           id,
+           start,
+           end,
+@@ -363,8 +365,8 @@
+     `WITH targets AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS c(path text,"humanPath" text,"publishedAt" timestamptz))
+     SELECT c.path,
+     (SELECT count(*)::int FROM website_event e WHERE e.website_id=$1::uuid AND e.url_path=c."humanPath" AND e.event_type=1 AND e.created_at>=c."publishedAt" AND e.created_at<c."publishedAt"+interval '7 days') AS pv,
+-    (SELECT count(*)::int FROM liekan_reporting_log l WHERE l.website_id=$1::uuid AND l.path=c.path AND ${crawlerAiSql('l')}${crawlerIdentitySql(metrics.crawlerIdentityScope, 'l')}${metrics.crawlerMetricsVersion === 1 ? " AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%'" : ''} AND l.created_at>=c."publishedAt" AND l.created_at<c."publishedAt"+interval '7 days')-
+-    (SELECT count(*)::int FROM liekan_reporting_log l WHERE l.website_id=$1::uuid AND l.path=c.path AND ${crawlerAiSql('l')}${crawlerIdentitySql(metrics.crawlerIdentityScope, 'l')}${metrics.crawlerMetricsVersion === 1 ? " AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%'" : ''} AND l.created_at>=c."publishedAt"-interval '7 days' AND l.created_at<c."publishedAt") AS increment
++    (SELECT count(*)::int FROM liekan_reporting_log l WHERE l.website_id=$1::uuid AND l.path=c.path AND ${crawlerAiSql('l')}${crawlerIdentitySql(metrics.crawlerIdentityScope, 'l')} AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%' AND l.created_at>=c."publishedAt" AND l.created_at<c."publishedAt"+interval '7 days')-
++    (SELECT count(*)::int FROM liekan_reporting_log l WHERE l.website_id=$1::uuid AND l.path=c.path AND ${crawlerAiSql('l')}${crawlerIdentitySql(metrics.crawlerIdentityScope, 'l')} AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%' AND l.created_at>=c."publishedAt"-interval '7 days' AND l.created_at<c."publishedAt") AS increment
+     FROM targets c ORDER BY c."publishedAt" DESC`,
+     id,
+     JSON.stringify(
+@@ -407,7 +409,7 @@
+   }
+ 
+   const rows = await query<{ month: string; total: number; ai: number }>(
+-    `SELECT to_char(created_at AT TIME ZONE $3,'YYYY-MM') AS month,count(*)::int AS total,count(*) FILTER(WHERE ${crawlerAiSql()})::int AS ai FROM liekan_reporting_log WHERE website_id=$1::uuid ${crawlerIdentitySql(metrics.crawlerIdentityScope)}${metrics.crawlerMetricsVersion === 1 ? " AND user_agent NOT LIKE 'Liekan-Crawler-Check/%'" : ''} AND created_at${metrics.crawlerMetricsVersion === 1 ? '<' : '<='}$2 AND created_at>=((date_trunc('month',$4::timestamptz AT TIME ZONE $3)-interval '5 months') AT TIME ZONE $3) GROUP BY 1 ORDER BY 1`,
++    `SELECT to_char(created_at AT TIME ZONE $3,'YYYY-MM') AS month,count(*)::int AS total,count(*) FILTER(WHERE ${crawlerAiSql()})::int AS ai FROM liekan_reporting_log WHERE website_id=$1::uuid ${crawlerIdentitySql(metrics.crawlerIdentityScope)} AND user_agent NOT LIKE 'Liekan-Crawler-Check/%' AND created_at${metrics.crawlerMetricsVersion === 1 ? '<' : '<='}$2 AND created_at>=((date_trunc('month',$4::timestamptz AT TIME ZONE $3)-interval '5 months') AT TIME ZONE $3) GROUP BY 1 ORDER BY 1`,
+     id,
+     end,
+     timezone,
+@@ -439,7 +441,7 @@
+     if (series) return series;
+   }
+   return query(
+-    `SELECT to_char(created_at AT TIME ZONE $4,'${hour ? 'YYYY-MM-DD HH24:00' : 'YYYY-MM-DD'}') AS day,bot,bot_type AS type,count(*)::int AS count,count(*) FILTER(WHERE ${crawlerAiSql()})::int AS "aiRequests" FROM liekan_reporting_log WHERE website_id=$1::uuid AND ${metrics.crawlerMetricsVersion === 1 ? "created_at>=$2 AND created_at<$3 AND user_agent NOT LIKE 'Liekan-Crawler-Check/%'" : 'created_at BETWEEN $2 AND $3'}${crawlerIdentitySql(metrics.crawlerIdentityScope)} GROUP BY 1,2,3 ORDER BY 1`,
++    `SELECT to_char(created_at AT TIME ZONE $4,'${hour ? 'YYYY-MM-DD HH24:00' : 'YYYY-MM-DD'}') AS day,bot,bot_type AS type,count(*)::int AS count,count(*) FILTER(WHERE ${crawlerAiSql()})::int AS "aiRequests" FROM liekan_reporting_log WHERE website_id=$1::uuid AND ${metrics.crawlerMetricsVersion === 1 ? 'created_at>=$2 AND created_at<$3' : 'created_at BETWEEN $2 AND $3'} AND user_agent NOT LIKE 'Liekan-Crawler-Check/%' ${crawlerIdentitySql(metrics.crawlerIdentityScope)} GROUP BY 1,2,3 ORDER BY 1`,
+     id,
+     start,
+     end,

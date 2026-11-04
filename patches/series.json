@@ -16,6 +16,10 @@
     {
       "path": "patches/observation-clarity.patch",
       "sha256": "b90068eb3fd03a6674833d5112ee1f7c1ae57cb8fccaa9d28ee085189cbb49f1"
+    },
+    {
+      "path": "patches/internal-check-exclusion.patch",
+      "sha256": "89237983f47b27aff05ce8583c5445cbb1dd116fd1efe8e4b6f146aaf01fb704"
     }
   ],
   "test_files": [
@@ -30,9 +34,16 @@
     "src/app/api/liekan/websites/[websiteId]/vercel-history/route.test.ts",
     "src/components/liekan/features/VercelHistory.test.tsx",
     "src/lib/liekan/contracts/vercel-history.test.ts",
-    "src/lib/liekan/upstream/vercel-history.test.ts"
+    "src/lib/liekan/upstream/vercel-history.test.ts",
+    "src/lib/liekan/upstream/logs.internal-check.test.ts",
+    "src/lib/liekan/upstream/logs.test.ts"
   ],
-  "minimum_passed_tests": 124,
+  "minimum_passed_tests": 139,
   "required_skipped_tests": 0,
-  "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots."
+  "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots.",
+  "integration_tests": {
+    "file": "src/lib/liekan/upstream/analysis-rollups.integration.test.ts",
+    "selected": "matches exact raw log populations|keeps today static errors",
+    "required_passed": 2
+  }
 }
