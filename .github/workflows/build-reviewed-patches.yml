@@ -53,6 +53,7 @@ jobs:
         CHECK
         cp source/LICENSE output/GEOINFLOW-LICENSE
         cp build-config/patches/*.patch output/
+        printf '%s\n' "$SOURCE_SHA" > output/source-commit.txt
     - name: Run targeted tests including isolated PostgreSQL semantics
       id: tests
       shell: bash
