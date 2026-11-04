@@ -1,0 +1,34 @@
+{
+  "source_sha": "6ba7c79d8d263ff620911fdccd90dd90be85dfb7",
+  "patches": [
+    {
+      "path": "patches/null-funnel.patch",
+      "sha256": "e571b07529687cd8623838484986eb8e9fb8cece944b81aaf517da6b3de77fa1"
+    },
+    {
+      "path": "patches/vercel-missing-ip.patch",
+      "sha256": "4a74111f566083d60c8f4ece249c829af84116fc86fd56b90bfa931071e1d992"
+    },
+    {
+      "path": "patches/vercel-history.patch",
+      "sha256": "9cc2cb3ef91bce28d809b0e48854500524f43aa469ad7916a0194353161f4d96"
+    }
+  ],
+  "test_files": [
+    "src/components/metrics/PerformanceCard.test.tsx",
+    "src/lib/performance-value.test.ts",
+    "src/queries/sql/funnels/getFunnel.integration.test.ts",
+    "src/queries/sql/funnels/getFunnel.test.ts",
+    "src/queries/sql/performance/getPerformance.test.ts",
+    "src/lib/liekan/log-ingestion/vercel-requests.test.ts",
+    "src/lib/liekan/vercel-import.test.ts",
+    "src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts",
+    "src/app/api/liekan/websites/[websiteId]/vercel-history/route.test.ts",
+    "src/components/liekan/features/VercelHistory.test.tsx",
+    "src/lib/liekan/contracts/vercel-history.test.ts",
+    "src/lib/liekan/upstream/vercel-history.test.ts"
+  ],
+  "minimum_passed_tests": 124,
+  "required_skipped_tests": 0,
+  "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots."
+}

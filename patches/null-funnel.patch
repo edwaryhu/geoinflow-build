@@ -1,0 +1,746 @@
+--- a/src/app/(main)/websites/[websiteId]/(reports)/performance/Performance.tsx
++++ b/src/app/(main)/websites/[websiteId]/(reports)/performance/Performance.tsx
+@@ -32,6 +32,7 @@
+ import { CHART_COLORS } from '@/lib/constants';
+ import { generateTimeSeries } from '@/lib/date';
+ import { formatLongNumber } from '@/lib/format';
++import { performanceValue } from '@/lib/performance-value';
+ import styles from './Performance.module.css';
+ 
+ export interface PerformanceProps {
+@@ -86,7 +87,7 @@
+         {
+           label: 'p50',
+           data: generateTimeSeries(
+-            data.chart.map((d: any) => ({ x: d.t, y: Number(d.p50) })),
++            data.chart.map((d: any) => ({ x: d.t, y: performanceValue(d.p50) })),
+             startDate,
+             endDate,
+             unit,
+@@ -103,7 +104,7 @@
+         {
+           label: 'p75',
+           data: generateTimeSeries(
+-            data.chart.map((d: any) => ({ x: d.t, y: Number(d.p75) })),
++            data.chart.map((d: any) => ({ x: d.t, y: performanceValue(d.p75) })),
+             startDate,
+             endDate,
+             unit,
+@@ -120,7 +121,7 @@
+         {
+           label: 'p95',
+           data: generateTimeSeries(
+-            data.chart.map((d: any) => ({ x: d.t, y: Number(d.p95) })),
++            data.chart.map((d: any) => ({ x: d.t, y: performanceValue(d.p95) })),
+             startDate,
+             endDate,
+             unit,
+@@ -168,7 +169,7 @@
+               <PerformanceCard
+                 key={metric}
+                 metric={metric}
+-                value={Number(stats.data?.[metric]?.[selectedPercentile] || 0)}
++                value={performanceValue(stats.data?.[metric]?.[selectedPercentile])}
+                 label={t(labels[metric]) || metric.toUpperCase()}
+                 formatValue={(n: number) => formatMetricValue(metric, n)}
+                 onClick={() => setSelectedMetric(metric)}
+@@ -287,9 +288,9 @@
+         showPercentage={false}
+         formatCount={formatCount}
+         data={(data ?? [])
+-          .filter(row => Number(row[percentile]) > 0)
++          .filter(row => performanceValue(row[percentile]) !== null)
+           .slice(0, 20)
+-          .map(row => ({ label: row.name, count: Number(row[percentile]), percent: 0 }))}
++          .map(row => ({ label: row.name, count: performanceValue(row[percentile])!, percent: 0 }))}
+         renderLabel={renderLabel}
+       />
+     </LoadingPanel>
+--- a/src/app/api/websites/[websiteId]/performance/chart/contract.ts
++++ b/src/app/api/websites/[websiteId]/performance/chart/contract.ts
+@@ -36,13 +36,13 @@
+                           type: 'string',
+                         },
+                         p50: {
+-                          type: 'number',
++                          type: ['number', 'null'],
+                         },
+                         p75: {
+-                          type: 'number',
++                          type: ['number', 'null'],
+                         },
+                         p95: {
+-                          type: 'number',
++                          type: ['number', 'null'],
+                         },
+                       },
+                       required: ['t', 'p50', 'p75', 'p95'],
+--- a/src/app/api/websites/[websiteId]/performance/metrics/contract.ts
++++ b/src/app/api/websites/[websiteId]/performance/metrics/contract.ts
+@@ -33,13 +33,13 @@
+                       type: 'string',
+                     },
+                     p50: {
+-                      type: 'number',
++                      type: ['number', 'null'],
+                     },
+                     p75: {
+-                      type: 'number',
++                      type: ['number', 'null'],
+                     },
+                     p95: {
+-                      type: 'number',
++                      type: ['number', 'null'],
+                     },
+                     count: {
+                       type: 'number',
+--- a/src/app/api/websites/[websiteId]/performance/stats/contract.ts
++++ b/src/app/api/websites/[websiteId]/performance/stats/contract.ts
+@@ -31,13 +31,13 @@
+                     type: 'object',
+                     properties: {
+                       p50: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p75: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p95: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                     },
+                     required: ['p50', 'p75', 'p95'],
+@@ -46,13 +46,13 @@
+                     type: 'object',
+                     properties: {
+                       p50: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p75: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p95: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                     },
+                     required: ['p50', 'p75', 'p95'],
+@@ -61,13 +61,13 @@
+                     type: 'object',
+                     properties: {
+                       p50: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p75: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p95: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                     },
+                     required: ['p50', 'p75', 'p95'],
+@@ -76,13 +76,13 @@
+                     type: 'object',
+                     properties: {
+                       p50: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p75: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p95: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                     },
+                     required: ['p50', 'p75', 'p95'],
+@@ -91,13 +91,13 @@
+                     type: 'object',
+                     properties: {
+                       p50: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p75: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                       p95: {
+-                        type: 'number',
++                        type: ['number', 'null'],
+                       },
+                     },
+                     required: ['p50', 'p75', 'p95'],
+--- /dev/null
++++ b/src/components/metrics/PerformanceCard.test.tsx
+@@ -0,0 +1,45 @@
++// @vitest-environment jsdom
++import { cleanup, render, screen } from '@testing-library/react';
++import { afterEach, describe, expect, test, vi } from 'vitest';
++import { PerformanceCard } from './PerformanceCard';
++
++vi.mock('@umami/react-zen', () => ({
++  Column: ({ children }: any) => <div>{children}</div>,
++  Text: ({ children }: any) => <span>{children}</span>,
++}));
++vi.mock('motion/react', () => ({
++  useSpring: (value: number) => ({ value, jump: vi.fn(), set: vi.fn() }),
++  useTransform: (spring: any, format: (value: number) => string) => format(spring.value),
++}));
++vi.mock('@/components/common/AnimatedDiv', () => ({
++  AnimatedDiv: ({ children }: any) => <span>{children}</span>,
++}));
++vi.mock('@/components/common/Badge', () => ({
++  Badge: ({ children }: any) => <span data-testid="rating">{children}</span>,
++}));
++vi.mock('@/components/hooks', () => ({ useMessages: () => ({
++  t: (value: string) => value,
++  labels: { good: 'Good', poor: 'Poor', needsImprovement: 'Needs improvement' },
++  messages: { noDataAvailable: 'No data available' },
++}) }));
++vi.mock('@/lib/format', () => ({ formatNumber: String }));
++
++afterEach(cleanup);
++
++describe('PerformanceCard missing versus measured values', () => {
++  test.each([null, Number.NaN])('missing value %s is not displayed or rated as zero', value => {
++    render(<PerformanceCard metric="cls" value={value} label="CLS"
++      formatValue={value => value.toFixed(3)} />);
++    expect(screen.getByText('—')).toBeTruthy();
++    expect(screen.getByText('No data available')).toBeTruthy();
++    expect(screen.queryByText('Good')).toBeNull();
++    expect(screen.queryByText('0.000')).toBeNull();
++  });
++  test('an observed CLS zero remains a valid measured good value', () => {
++    render(<PerformanceCard metric="cls" value={0} label="CLS"
++      formatValue={value => value.toFixed(3)} />);
++    expect(screen.getByText('0.000')).toBeTruthy();
++    expect(screen.getByText('Good')).toBeTruthy();
++    expect(screen.queryByText('No data available')).toBeNull();
++  });
++});
+--- a/src/components/metrics/PerformanceCard.tsx
++++ b/src/components/metrics/PerformanceCard.tsx
+@@ -10,7 +10,7 @@
+ 
+ export interface PerformanceCardProps {
+   metric: 'lcp' | 'inp' | 'cls' | 'fcp' | 'ttfb';
+-  value: number;
++  value: number | null;
+   label: string;
+   formatValue?: (n: any) => string;
+   onClick?: () => void;
+@@ -33,19 +33,20 @@
+ 
+ export const PerformanceCard = ({
+   metric,
+-  value = 0,
++  value = null,
+   label,
+   formatValue = formatNumber,
+   onClick,
+   selected = false,
+ }: PerformanceCardProps) => {
+-  const { t, labels } = useMessages();
+-  const rating = getRating(metric, value);
++  const { t, labels, messages } = useMessages();
++  const measured = value != null && Number.isFinite(value);
++  const rating = measured ? getRating(metric, value) : null;
+   const prevMetricRef = useRef(metric);
+   const metricChanged = prevMetricRef.current !== metric;
+   if (metricChanged) prevMetricRef.current = metric;
+ 
+-  const target = !Number.isNaN(value) ? value : 0;
++  const target = measured ? value : 0;
+   const spring = useSpring(target, { stiffness: 170, damping: 26 });
+   const display = useTransform(spring, n => formatValue(n));
+ 
+@@ -71,11 +72,15 @@
+         {label}
+       </Text>
+       <Text size="4xl" weight="bold" wrap="nowrap">
+-        <AnimatedDiv>{display}</AnimatedDiv>
++        {measured ? <AnimatedDiv>{display}</AnimatedDiv> : '—'}
+       </Text>
+-      <Badge variant={RATING_VARIANTS[rating]}>
+-        {t(labels[rating === 'needs-improvement' ? 'needsImprovement' : rating])}
+-      </Badge>
++      {rating ? (
++        <Badge variant={RATING_VARIANTS[rating]}>
++          {t(labels[rating === 'needs-improvement' ? 'needsImprovement' : rating])}
++        </Badge>
++      ) : (
++        <Text>{t(messages.noDataAvailable)}</Text>
++      )}
+     </Column>
+   );
+ };
+--- a/src/lib/date.ts
++++ b/src/lib/date.ts
+@@ -399,7 +399,7 @@
+ }
+ 
+ export function generateTimeSeries(
+-  data: { x: string; y: number; d?: string }[],
++  data: { x: string; y: number | null; d?: string }[],
+   minDate: Date,
+   maxDate: Date,
+   unit: string,
+--- a/src/lib/liekan/upstream/analytics-revision.ts
++++ b/src/lib/liekan/upstream/analytics-revision.ts
+@@ -2,7 +2,7 @@
+ import { getPublishedCatalog } from '../crawlers/published';
+ import { CALENDAR_POLICY_VERSION } from '../contracts/calendar';
+ /** Fences derived results and queued work when reporting semantics change. */
+-export const ANALYTICS_READ_VERSION = 'analytics-read-v3';
++export const ANALYTICS_READ_VERSION = 'analytics-read-v4';
+ export type AnalyticsResource = 'website' | 'link' | 'pixel';
+ export const resourceCacheTag = (type: AnalyticsResource, id: string) =>
+   `${type}:${id.toLowerCase()}`;
+--- /dev/null
++++ b/src/lib/performance-value.test.ts
+@@ -0,0 +1,8 @@
++import { expect, it } from 'vitest';
++import { performanceValue } from './performance-value';
++it('distinguishes absent/non-finite measurements from observed zero', () => {
++  for (const value of [null, undefined, NaN, Infinity, -Infinity, '', 'NaN']) expect(performanceValue(value)).toBeNull();
++  expect(performanceValue(0)).toBe(0);
++  expect(performanceValue('0')).toBe(0);
++  expect(performanceValue('123.5')).toBe(123.5);
++});
+--- /dev/null
++++ b/src/lib/performance-value.ts
+@@ -0,0 +1,6 @@
++/** Preserve missing/non-finite measurements and retain valid zero (for example CLS=0). */
++export function performanceValue(value: unknown): number | null {
++  if (value == null || (typeof value === 'string' && value.trim() === '')) return null;
++  const numeric = Number(value);
++  return Number.isFinite(numeric) ? numeric : null;
++}
+--- /dev/null
++++ b/src/queries/sql/funnels/getFunnel.integration.test.ts
+@@ -0,0 +1,93 @@
++// @vitest-environment node
++// Only an explicitly supplied disposable loopback database may run this test.
++import { randomUUID } from 'node:crypto';
++import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
++import { getFunnel } from './getFunnel';
++
++const { db } = vi.hoisted(() => ({ db: { client: null as any } }));
++vi.mock('@/lib/db', () => ({
++  CLICKHOUSE: 'clickhouse', PRISMA: 'prisma',
++  runQuery: (queries: Record<string, () => unknown>) => queries.prisma(),
++}));
++vi.mock('@/lib/clickhouse', () => ({ default: {} }));
++vi.mock('@/lib/prisma', () => ({ default: {
++  parseFilters: ({ websiteId, startDate, endDate }: any) => ({
++    queryParams: { websiteId, startDate, endDate },
++    filterQuery: '', joinSessionQuery: '', cohortQuery: '',
++  }),
++  getAddIntervalQuery: (column: string, interval: string) => {
++    if (interval !== '30 minute') throw new Error('Unexpected test interval');
++    return `${column} + interval '30 minute'`;
++  },
++  rawQuery: async (query: string, params: Record<string, unknown>) => {
++    const values: unknown[] = [];
++    const sql = query.replace(/\{\{(\w+)(::uuid)?\}\}/g, (_match, key, cast) => {
++      if (!(key in params)) throw new Error('Missing parameter');
++      values.push(params[key]);
++      return `$${values.length}${cast || ''}`;
++    });
++    return (await db.client.query(sql, values)).rows;
++  },
++} }));
++
++const connection = process.env.HIMAX_GEO_PATCH_TEST_PG;
++const websiteId = '00000000-0000-4000-8000-000000000001';
++const parameters = {
++  startDate: new Date('2026-11-04T00:00:00Z'),
++  endDate: new Date('2026-11-04T01:00:00Z'), window: 30,
++};
++
++describe.skipIf(!connection)('getFunnel actual PostgreSQL event semantics', () => {
++  beforeAll(async () => {
++    const url = new URL(connection!);
++    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
++      || !/^\/[a-z0-9_]+_patch_test$/.test(url.pathname)) {
++      throw new Error('Only a disposable loopback *_patch_test database is allowed');
++    }
++    const { Client } = await import('pg');
++    db.client = new Client({ connectionString: connection });
++    await db.client.connect();
++    await db.client.query(`SET statement_timeout='3s'; SET jit=off`);
++    // Temporary connection-local table shadows no existing production table.
++    await db.client.query(`CREATE TEMP TABLE website_event (
++      website_id uuid NOT NULL, session_id uuid NOT NULL,
++      created_at timestamptz NOT NULL, event_type integer NOT NULL,
++      url_path text, event_name text
++    )`);
++  });
++  afterAll(async () => { if (db.client) await db.client.end(); });
++  beforeEach(async () => { await db.client.query('TRUNCATE TABLE pg_temp.website_event'); });
++
++  async function session(events: Array<[number, string, string | null]>) {
++    const sessionId = randomUUID();
++    for (const [index, [type, path, name]] of events.entries()) {
++      await db.client.query(`INSERT INTO pg_temp.website_event
++        (website_id, session_id, created_at, event_type, url_path, event_name)
++        VALUES ($1, $2, $3, $4, $5, $6)`,
++      [websiteId, sessionId, new Date(parameters.startDate.getTime() + index * 1000),
++        type, path, name]);
++    }
++  }
++
++  test('custom-only and performance events do not qualify as landing pageviews', async () => {
++    await session([[1, '/landing', null], [2, '/landing', 'contact_open']]);
++    await session([[2, '/landing', 'contact_open']]);
++    await session([[5, '/landing', null], [2, '/landing', 'contact_open']]);
++    await session([[1, '/landing', null], [1, '/other', 'contact_open']]);
++    const result = await getFunnel(websiteId, { ...parameters, steps: [
++      { type: 'path', value: '/landing' }, { type: 'event', value: 'contact_open' },
++    ] }, {});
++    expect(result.map(row => row.visitors)).toEqual([2, 1]);
++    expect(result[1].remaining).toBe(0.5);
++  });
++
++  test('later path steps require pageviews and first event steps require custom events', async () => {
++    await session([[2, '/form', 'contact_open'], [1, '/thanks', null]]);
++    await session([[2, '/form', 'contact_open'], [2, '/thanks', 'something_else']]);
++    await session([[1, '/form', 'contact_open'], [1, '/thanks', null]]);
++    const result = await getFunnel(websiteId, { ...parameters, steps: [
++      { type: 'event', value: 'contact_open' }, { type: 'path', value: '/thanks' },
++    ] }, {});
++    expect(result.map(row => row.visitors)).toEqual([2, 1]);
++  });
++});
+--- a/src/queries/sql/funnels/getFunnel.test.ts
++++ b/src/queries/sql/funnels/getFunnel.test.ts
+@@ -258,3 +258,18 @@
+     expect(params).toMatchObject({ f_0_0_k: 'plan', f_0_0_v: '%pro%' });
+   });
+ });
++
++// Shape regression covers both storage engines; semantic fixture is a separate isolated-PG test.
++describe.each(['prisma', 'clickhouse'] as const)('%s step event semantics', backend => {
++  test.each([
++    { steps: [{ type: 'path', value: '/landing' }, { type: 'event', value: 'contact_open' }], first: 1, second: 2 },
++    { steps: [{ type: 'event', value: 'contact_open' }, { type: 'path', value: '/thanks' }], first: 2, second: 1 },
++  ])('requires each step to use its declared event type', async ({ steps, first, second }) => {
++    state.mode = backend;
++    await getFunnel('website-1', { ...baseParameters, steps }, {});
++    const query = (backend === 'prisma' ? prismaRawQuery : clickhouseRawQuery).mock.calls[0][0];
++    expect(query).toContain(`${backend === 'prisma' ? 'website_event' : 'level0'}.event_type = ${first}`);
++    expect(query).toContain(`${backend === 'prisma' ? 'we' : 'y'}.event_type = ${second}`);
++    if (backend === 'clickhouse') expect(query).toContain('event_id, session_id, event_type, url_path');
++  });
++});
+--- a/src/queries/sql/funnels/getFunnel.ts
++++ b/src/queries/sql/funnels/getFunnel.ts
+@@ -137,6 +137,7 @@
+             ${joinSessionQuery}
+             where website_event.website_id = {{websiteId::uuid}}
+               and website_event.created_at between {{startDate}} and {{endDate}}
++              and website_event.event_type = ${isURL ? 1 : 2}
+               and ${column} ${operator} {{${i}}}
+               ${filterQuery}
+               ${existsClause}
+@@ -153,6 +154,7 @@
+                   `l.created_at `,
+                   `${window} minute`,
+                 )}
++                and we.event_type = ${isURL ? 1 : 2}
+                 and we.${column} ${operator} {{${i}}}
+                 and we.created_at <= {{endDate}}
+                 ${existsClause}
+@@ -284,7 +286,8 @@
+           level1 AS (
+             select *
+             from level0
+-            where ${column} ${operator} {param${i}:String}
++            where level0.event_type = ${isURL ? 1 : 2}
++              and ${column} ${operator} {param${i}:String}
+             ${eventDataClause}
+           )`;
+         } else {
+@@ -300,13 +303,14 @@
+             join level0 y
+             on x.session_id = y.session_id
+             where y.created_at between x.created_at and x.created_at + interval ${window} minute
++                and y.event_type = ${isURL ? 1 : 2}
+                 and y.${column} ${operator} {param${i}:String}
+                 ${eventDataClause}
+           )`;
+         }
+ 
+         pv.sumQuery += `\n${startSum}select ${levelNumber} as level, count(distinct(session_id)) as count from level${levelNumber}`;
+-        pv.stepFilterQuery += `${startFilter} ${column} ${operator} {param${i}:String} `;
++        pv.stepFilterQuery += `${startFilter} (event_type = ${isURL ? 1 : 2} and ${column} ${operator} {param${i}:String}) `;
+         pv.params[`param${i}`] = paramValue;
+ 
+         return pv;
+@@ -326,7 +330,7 @@
+   return rawQuery(
+     `
+     WITH level0 AS (
+-      select distinct event_id, session_id, url_path, referrer_path, event_name, created_at
++      select distinct event_id, session_id, event_type, url_path, referrer_path, event_name, created_at
+       from website_event
+       ${cohortQuery}
+       where (${stepFilterQuery})
+--- a/src/queries/sql/performance/getPerformance.test.ts
++++ b/src/queries/sql/performance/getPerformance.test.ts
+@@ -63,12 +63,26 @@
+     expect(sql).not.toContain('lcp_p50');
+     expect(sql).toContain('and filtered');
+   });
+-  test('stats executes only the summary and preserves empty-result defaults', async () => {
++  test('stats preserves unknown percentiles instead of manufacturing zero', async () => {
+     const stats = await getPerformanceStats('website', parameters, {});
+     expect(stats.count).toBe(0);
+-    expect(stats.lcp).toEqual({ p50: 0, p75: 0, p95: 0 });
++    expect(stats.lcp).toEqual({ p50: null, p75: null, p95: null });
+     expect(mocks.rawQuery).toHaveBeenCalledTimes(1);
+     expect(mocks.rawQuery.mock.calls[0][0]).not.toContain('group by t');
++  });
++  test('partial measurements retain real CLS zero while missing INP stays null', async () => {
++    mocks.rawQuery.mockResolvedValue([{ count: '1', cls_p50: '0', cls_p75: 0, cls_p95: 0, lcp_p50: '120', lcp_p75: 120, lcp_p95: 120, inp_p50: null, inp_p75: null, inp_p95: null }]);
++    const stats = await getPerformanceStats('website', parameters, {});
++    expect(stats.count).toBe(1);
++    expect(stats.cls).toEqual({ p50: 0, p75: 0, p95: 0 });
++    expect(stats.inp).toEqual({ p50: null, p75: null, p95: null });
++    expect(stats.lcp.p75).toBe(120);
++  });
++  test('chart and grouped responses preserve null/NaN and valid zero', async () => {
++    mocks.rawQuery.mockResolvedValue([{ t: '2026-11-04', p50: null, p75: NaN, p95: 0 }]);
++    expect((await getPerformanceChart('website', parameters, {})).chart[0]).toMatchObject({ p50: null, p75: null, p95: 0 });
++    mocks.rawQuery.mockResolvedValue([{ name: '/page', count: 0, p50: null, p75: NaN, p95: 0 }]);
++    expect((await getPerformanceMetrics('website', parameters, {}, 'url_path'))[0]).toMatchObject({ p50: null, p75: null, p95: 0 });
+   });
+   test('legacy composition preserves the chart and summary shape', async () => {
+     const result = await getPerformance('website', parameters, {});
+--- a/src/queries/sql/performance/getPerformance.ts
++++ b/src/queries/sql/performance/getPerformance.ts
+@@ -11,13 +11,13 @@
+ }
+ 
+ export interface PerformanceResult {
+-  chart: { t: string; p50: number; p75: number; p95: number }[];
++  chart: { t: string; p50: number | null; p75: number | null; p95: number | null }[];
+   summary: {
+-    lcp: { p50: number; p75: number; p95: number };
+-    inp: { p50: number; p75: number; p95: number };
+-    cls: { p50: number; p75: number; p95: number };
+-    fcp: { p50: number; p75: number; p95: number };
+-    ttfb: { p50: number; p75: number; p95: number };
++    lcp: { p50: number | null; p75: number | null; p95: number | null };
++    inp: { p50: number | null; p75: number | null; p95: number | null };
++    cls: { p50: number | null; p75: number | null; p95: number | null };
++    fcp: { p50: number | null; p75: number | null; p95: number | null };
++    ttfb: { p50: number | null; p75: number | null; p95: number | null };
+     count: number;
+   };
+ }
+--- a/src/queries/sql/performance/getPerformanceChart.ts
++++ b/src/queries/sql/performance/getPerformanceChart.ts
+@@ -1,5 +1,6 @@
+ import clickhouse from '@/lib/clickhouse';
+ import { CLICKHOUSE, PRISMA, runQuery } from '@/lib/db';
++import { performanceValue } from '@/lib/performance-value';
+ import prisma from '@/lib/prisma';
+ import type { QueryFilters } from '@/lib/types';
+ 
+@@ -48,7 +49,14 @@
+     { ...queryParams, startDate, endDate }, 'getPerformanceChart',
+   );
+ 
+-  return { chart };
++  return {
++    chart: chart.map(row => ({
++      ...row,
++      p50: performanceValue(row.p50),
++      p75: performanceValue(row.p75),
++      p95: performanceValue(row.p95),
++    })),
++  };
+ }
+ 
+ async function clickhouseQuery(
+@@ -63,7 +71,7 @@
+     websiteId,
+   });
+ 
+-  const chart = await rawQuery<{ t: string; p50: number; p75: number; p95: number }[]>(
++  const chart = await rawQuery<{ t: string; p50: number | null; p75: number | null; p95: number | null }[]>(
+     `
+     select
+       ${getDateSQL('created_at', unit, timezone)} t,
+@@ -83,5 +91,12 @@
+     { ...queryParams, startDate, endDate }, 'getPerformanceChart',
+   );
+ 
+-  return { chart };
++  return {
++    chart: chart.map(row => ({
++      ...row,
++      p50: performanceValue(row.p50),
++      p75: performanceValue(row.p75),
++      p95: performanceValue(row.p95),
++    })),
++  };
+ }
+--- a/src/queries/sql/performance/getPerformanceMetrics.ts
++++ b/src/queries/sql/performance/getPerformanceMetrics.ts
+@@ -2,15 +2,16 @@
+ import clickhouse from '@/lib/clickhouse';
+ import { SESSION_COLUMNS } from '@/lib/constants';
+ import { CLICKHOUSE, PRISMA, runQuery } from '@/lib/db';
++import { performanceValue } from '@/lib/performance-value';
+ import prisma from '@/lib/prisma';
+ import type { QueryFilters } from '@/lib/types';
+ import type { PerformanceParameters } from './getPerformance';
+ 
+ export interface PerformanceMetricsData {
+   name: string;
+-  p50: number;
+-  p75: number;
+-  p95: number;
++  p50: number | null;
++  p75: number | null;
++  p95: number | null;
+   count: number;
+ }
+ 
+@@ -64,6 +65,13 @@
+     `,
+     { ...queryParams, startDate, endDate },
+     'getPerformanceMetrics',
++  ).then(rows =>
++    rows.map(row => ({
++      ...row,
++      p50: performanceValue(row.p50),
++      p75: performanceValue(row.p75),
++      p95: performanceValue(row.p95),
++    })),
+   );
+ }
+ 
+@@ -102,5 +110,12 @@
+     `,
+     { ...queryParams, startDate, endDate },
+     'getPerformanceMetrics',
++  ).then(rows =>
++    rows.map(row => ({
++      ...row,
++      p50: performanceValue(row.p50),
++      p75: performanceValue(row.p75),
++      p95: performanceValue(row.p95),
++    })),
+   );
+ }
+--- a/src/queries/sql/performance/getPerformanceStats.ts
++++ b/src/queries/sql/performance/getPerformanceStats.ts
+@@ -1,3 +1,4 @@
++import { performanceValue } from '@/lib/performance-value';
+ import clickhouse from '@/lib/clickhouse';
+ import { CLICKHOUSE, PRISMA, runQuery } from '@/lib/db';
+ import prisma from '@/lib/prisma';
+@@ -60,29 +61,29 @@
+ 
+   const summary = {
+     lcp: {
+-      p50: Number(summaryResult?.lcp_p50 || 0),
+-      p75: Number(summaryResult?.lcp_p75 || 0),
+-      p95: Number(summaryResult?.lcp_p95 || 0),
++      p50: performanceValue(summaryResult?.lcp_p50),
++      p75: performanceValue(summaryResult?.lcp_p75),
++      p95: performanceValue(summaryResult?.lcp_p95),
+     },
+     inp: {
+-      p50: Number(summaryResult?.inp_p50 || 0),
+-      p75: Number(summaryResult?.inp_p75 || 0),
+-      p95: Number(summaryResult?.inp_p95 || 0),
++      p50: performanceValue(summaryResult?.inp_p50),
++      p75: performanceValue(summaryResult?.inp_p75),
++      p95: performanceValue(summaryResult?.inp_p95),
+     },
+     cls: {
+-      p50: Number(summaryResult?.cls_p50 || 0),
+-      p75: Number(summaryResult?.cls_p75 || 0),
+-      p95: Number(summaryResult?.cls_p95 || 0),
++      p50: performanceValue(summaryResult?.cls_p50),
++      p75: performanceValue(summaryResult?.cls_p75),
++      p95: performanceValue(summaryResult?.cls_p95),
+     },
+     fcp: {
+-      p50: Number(summaryResult?.fcp_p50 || 0),
+-      p75: Number(summaryResult?.fcp_p75 || 0),
+-      p95: Number(summaryResult?.fcp_p95 || 0),
++      p50: performanceValue(summaryResult?.fcp_p50),
++      p75: performanceValue(summaryResult?.fcp_p75),
++      p95: performanceValue(summaryResult?.fcp_p95),
+     },
+     ttfb: {
+-      p50: Number(summaryResult?.ttfb_p50 || 0),
+-      p75: Number(summaryResult?.ttfb_p75 || 0),
+-      p95: Number(summaryResult?.ttfb_p95 || 0),
++      p50: performanceValue(summaryResult?.ttfb_p50),
++      p75: performanceValue(summaryResult?.ttfb_p75),
++      p95: performanceValue(summaryResult?.ttfb_p95),
+     },
+     count: Number(summaryResult?.count || 0),
+   };
+@@ -134,29 +135,29 @@
+ 
+   const summary = {
+     lcp: {
+-      p50: Number(summaryResult?.lcp_p50 || 0),
+-      p75: Number(summaryResult?.lcp_p75 || 0),
+-      p95: Number(summaryResult?.lcp_p95 || 0),
++      p50: performanceValue(summaryResult?.lcp_p50),
++      p75: performanceValue(summaryResult?.lcp_p75),
++      p95: performanceValue(summaryResult?.lcp_p95),
+     },
+     inp: {
+-      p50: Number(summaryResult?.inp_p50 || 0),
+-      p75: Number(summaryResult?.inp_p75 || 0),
+-      p95: Number(summaryResult?.inp_p95 || 0),
++      p50: performanceValue(summaryResult?.inp_p50),
++      p75: performanceValue(summaryResult?.inp_p75),
++      p95: performanceValue(summaryResult?.inp_p95),
+     },
+     cls: {
+-      p50: Number(summaryResult?.cls_p50 || 0),
+-      p75: Number(summaryResult?.cls_p75 || 0),
+-      p95: Number(summaryResult?.cls_p95 || 0),
++      p50: performanceValue(summaryResult?.cls_p50),
++      p75: performanceValue(summaryResult?.cls_p75),
++      p95: performanceValue(summaryResult?.cls_p95),
+     },
+     fcp: {
+-      p50: Number(summaryResult?.fcp_p50 || 0),
+-      p75: Number(summaryResult?.fcp_p75 || 0),
+-      p95: Number(summaryResult?.fcp_p95 || 0),
++      p50: performanceValue(summaryResult?.fcp_p50),
++      p75: performanceValue(summaryResult?.fcp_p75),
++      p95: performanceValue(summaryResult?.fcp_p95),
+     },
+     ttfb: {
+-      p50: Number(summaryResult?.ttfb_p50 || 0),
+-      p75: Number(summaryResult?.ttfb_p75 || 0),
+-      p95: Number(summaryResult?.ttfb_p95 || 0),
++      p50: performanceValue(summaryResult?.ttfb_p50),
++      p75: performanceValue(summaryResult?.ttfb_p75),
++      p95: performanceValue(summaryResult?.ttfb_p95),
+     },
+     count: Number(summaryResult?.count || 0),
+   };

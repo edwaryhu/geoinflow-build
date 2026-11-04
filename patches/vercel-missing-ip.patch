@@ -1,0 +1,737 @@
+diff --git a/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts b/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts
+--- a/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts
++++ b/src/app/api/liekan/websites/[websiteId]/logs/import/contract.ts
+@@ -1,3 +1,4 @@
++import { vercelRequestImportSchema } from '@/lib/liekan/log-ingestion/vercel-requests';
+ import { z } from 'zod';
+ import { defineOperation } from '@/openapi/operation';
+ import { badRequestResponse, notFoundResponse, unauthorizedResponse } from '@/openapi/schemas';
+@@ -16,11 +17,11 @@
+         required: true,
+         content: {
+           'application/json': {
+-            schema: z.object({
++            schema: z.union([vercelRequestImportSchema, z.object({
+               format: z.enum(['json', 'combined']),
+               content: z.string().max(10485760).optional(),
+               records: z.array(z.record(z.string(), z.unknown())).max(1000).optional(),
+-            }),
++            })]),
+           },
+         },
+       },
+diff --git a/src/components/liekan/ReportComponents.tsx b/src/components/liekan/ReportComponents.tsx
+--- a/src/components/liekan/ReportComponents.tsx
++++ b/src/components/liekan/ReportComponents.tsx
+@@ -536,8 +536,10 @@
+   if (table === 'logBody' && field === 'ipMasked')
+     return (
+       <>
+-        {formatValue(value)}
++        {row.ipUnavailableReason === 'missing_client_ip' ? (i18n.locale === 'en-US' ? 'IP unavailable' : 'IP 未提供') : formatValue(value)}
+         {row.location && <span> / {row.location}</span>}
++        {row.requestPurpose === 'internal_check' && <span className="block text-faint">{(i18n.locale === 'en-US' ? 'Internal technical check' : '本轮内部技术检查')}</span>}
++        {row.requestPurpose === 'technical_unattributed' && <span className="block text-faint">{(i18n.locale === 'en-US' ? 'Technical request; owner unverified' : '技术请求，归属未核实')}</span>}
+       </>
+     );
+   if (table === 'logBody' && field === 'path')
+diff --git a/src/components/liekan/features/CrawlerDialog.tsx b/src/components/liekan/features/CrawlerDialog.tsx
+--- a/src/components/liekan/features/CrawlerDialog.tsx
++++ b/src/components/liekan/features/CrawlerDialog.tsx
+@@ -457,7 +457,7 @@
+                         i18n.text('有效 GET / 目录页面'),
+                         `${num(sum('successfulGets'))} / ${num(sum('successfulCatalogPages'))}`,
+                       ],
+-                      [i18n.text('响应发送字节'), num(sum('bytes'))],
++                      [i18n.text('响应发送字节'), metrics.length && metrics.every(row => row.bytes != null) ? num(sum('bytes')) : i18n.text('未采集或不完整')],
+                       [
+                         i18n.text('身份核验'),
+                         i18n.text('范围 {v0} · DNS {v3} · 边缘 {v4} · 未匹配 {v1} · 未核验 {v2}', [
+diff --git a/src/lib/liekan/contracts/crawler-analysis.ts b/src/lib/liekan/contracts/crawler-analysis.ts
+--- a/src/lib/liekan/contracts/crawler-analysis.ts
++++ b/src/lib/liekan/contracts/crawler-analysis.ts
+@@ -10,7 +10,7 @@
+ export interface CrawlerAnalyzedBot extends CrawlerRequestCounts {
+   botId: CrawlerBotId | null;
+   name: string;
+-  bytes: number;
++  bytes: number | null;
+   verifiedRange: number;
+   verifiedDns?: number;
+   verifiedEdge?: number;
+@@ -26,7 +26,7 @@
+   path: string;
+   humanPath: string;
+   mergedPaths: string[];
+-  bytes: number;
++  bytes: number | null;
+   ownedTerminatingBlocks: number;
+   ownedMatches: number;
+ }
+@@ -68,7 +68,7 @@
+     range: CrawlerAnalysisResponse['range'];
+     population?: BrowserPopulation;
+     quality: CrawlerObservationQuality;
+-    bots: (CrawlerRequestCounts & { botId: CrawlerBotId | null; name?: string; bytes: number })[];
++    bots: (CrawlerRequestCounts & { botId: CrawlerBotId | null; name?: string; bytes: number | null })[];
+     platforms: CrawlerAnalyzedPlatform[];
+   };
+   bots: CrawlerAnalyzedBot[];
+diff --git a/src/lib/liekan/crawlers/analysis.ts b/src/lib/liekan/crawlers/analysis.ts
+--- a/src/lib/liekan/crawlers/analysis.ts
++++ b/src/lib/liekan/crawlers/analysis.ts
+@@ -62,7 +62,7 @@
+ }
+ 
+ export const crawlerBase = `FROM liekan_effective_log l LEFT JOIN liekan_crawler_evidence e ON e.website_id=l.website_id AND e.log_id=l.id
+-  WHERE l.website_id=$1::uuid AND l.created_at>=$2::timestamptz AND l.created_at<$3::timestamptz AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%'`;
++  WHERE l.website_id=$1::uuid AND l.created_at>=$2::timestamptz AND l.created_at<$3::timestamptz AND l.user_agent NOT LIKE 'Liekan-Crawler-Check/%' AND COALESCE(e.measurement#>>'{requestEvidence,purpose}','')<>'internal_check'`;
+ const reportingCrawlerBase = crawlerBase.replace('liekan_effective_log', 'liekan_reporting_log');
+ export const crawlerCountColumns = `count(*)::float8 AS requests,
+   count(*) FILTER(WHERE status>=100 AND status<200)::float8 AS "status1xx",
+@@ -192,7 +192,7 @@
+           const args = [websiteId, new Date(startAt), new Date(endAt)];
+           const quality = await crawlerWindowQuality(tx, websiteId, startAt, endAt, timezone);
+           const bots = await tx.query<CrawlerAnalyzedBot>(
+-            `SELECT l.reporting_crawler_id AS "botId",l.bot AS name,${crawlerCountColumns},sum(bytes)::float8 AS bytes,
++            `SELECT l.reporting_crawler_id AS "botId",l.bot AS name,${crawlerCountColumns},CASE WHEN count(bytes)=count(*) THEN sum(bytes)::float8 END AS bytes,
+       count(*) FILTER(WHERE verification='verified_range')::float8 AS "verifiedRange",count(*) FILTER(WHERE verification='verified_dns')::float8 AS "verifiedDns",count(*) FILTER(WHERE verification='verified_edge')::float8 AS "verifiedEdge",count(*) FILTER(WHERE verification='range_mismatch')::float8 AS "rangeMismatch",
+       count(*) FILTER(WHERE verification NOT IN('verified_range','verified_dns','verified_edge','range_mismatch'))::float8 AS unverified,
+       count(distinct path) FILTER(WHERE method='GET' AND status>=200 AND status<300 AND EXISTS(SELECT 1 FROM liekan_catalog c WHERE c.website_id=l.website_id AND c.path=l.path))::int AS "successfulCatalogPages",
+@@ -200,7 +200,7 @@
+             ...args,
+           );
+           const pages = await tx.query<CrawlerAnalyzedPage>(
+-            `SELECT l.reporting_crawler_id AS "botId",path,l.bot AS name,${crawlerCountColumns},sum(bytes)::float8 AS bytes,
++            `SELECT l.reporting_crawler_id AS "botId",path,l.bot AS name,${crawlerCountColumns},CASE WHEN count(bytes)=count(*) THEN sum(bytes)::float8 END AS bytes,
+       count(*) FILTER(WHERE ${crawlerOwnedBlock})::int AS "ownedTerminatingBlocks",
+       count(*) FILTER(WHERE ${crawlerOwnedMatch})::int AS "ownedMatches"
+       ${reportingCrawlerBase}${crawlerIdentitySql(identityScope, 'l')} AND NOT ${unknownCrawlerSql('l')} GROUP BY 1,2,3 ORDER BY requests DESC,path LIMIT 1001`,
+@@ -213,7 +213,7 @@
+             timezone,
+           };
+           const previousBots = await tx.query(
+-            `SELECT l.reporting_crawler_id AS "botId",l.bot AS name,${crawlerCountColumns},sum(bytes)::float8 AS bytes ${reportingCrawlerBase}${crawlerIdentitySql(identityScope, 'l')} AND NOT ${unknownCrawlerSql('l')} GROUP BY 1,2`,
++            `SELECT l.reporting_crawler_id AS "botId",l.bot AS name,${crawlerCountColumns},CASE WHEN count(bytes)=count(*) THEN sum(bytes)::float8 END AS bytes ${reportingCrawlerBase}${crawlerIdentitySql(identityScope, 'l')} AND NOT ${unknownCrawlerSql('l')} GROUP BY 1,2`,
+             websiteId,
+             new Date(previousRange.startAt),
+             new Date(previousRange.endAt),
+diff --git a/src/lib/liekan/history-repair/model.ts b/src/lib/liekan/history-repair/model.ts
+--- a/src/lib/liekan/history-repair/model.ts
++++ b/src/lib/liekan/history-repair/model.ts
+@@ -269,7 +269,9 @@
+       ? original.verificationReason
+       : conflict
+         ? 'historical-identity-conflict'
+-        : 'historical-ua-only',
++        : original.verificationReason === 'missing_client_ip'
++          ? 'missing_client_ip'
++          : 'historical-ua-only',
+   };
+   const afterProductForm = after.crawlerId ? catalog?.forms.get(after.crawlerId) || null : null;
+   return {
+diff --git a/src/lib/liekan/ingest.ts b/src/lib/liekan/ingest.ts
+--- a/src/lib/liekan/ingest.ts
++++ b/src/lib/liekan/ingest.ts
+@@ -19,9 +19,11 @@
+   path: string;
+   method: string;
+   status: number;
+-  bytes: number;
+-  ipMasked: string;
+-  ipHash: string;
++  bytes: number | null;
++  ipMasked: string | null;
++  ipHash: string | null;
++  eventDigest?: string;
++  requestProvenance?: Record<string, unknown>;
+   userAgent: string;
+   location: string;
+   declaredLocation?: string | null;
+diff --git a/src/lib/liekan/log-ingestion/measurement.ts b/src/lib/liekan/log-ingestion/measurement.ts
+--- a/src/lib/liekan/log-ingestion/measurement.ts
++++ b/src/lib/liekan/log-ingestion/measurement.ts
+@@ -19,6 +19,17 @@
+     .optional(),
+   bytesAvailability: z.enum(['present', 'missing', 'legacy_unknown']),
+   bytesUnit: z.enum(['edge_body', 'combined_response', 'unknown']),
++  requestEvidence: z.object({
++    provider: z.literal('vercel-requests-v1'),
++    projectId: z.string().min(1).max(100), requestId: z.string().min(1).max(250),
++    identityAvailability: z.literal('missing'), reason: z.literal('missing_client_ip'),
++    purpose: z.enum(['internal_check', 'technical_unattributed', 'unclassified']),
++    purposeEvidence: z.literal('exact_audit_ua_20261104').nullable(),
++    country: z.string().regex(/^[A-Z]{2}$/).nullable(), countryBasis: z.literal('provider_declared'),
++    timeRange: z.object({ start: z.iso.datetime(), end: z.iso.datetime() }),
++    hasMore: z.boolean(),
++    excludedIntervals: z.array(z.object({ start: z.iso.datetime(), end: z.iso.datetime() })).max(100),
++  }).optional(),
+ });
+ export type LogMeasurement = z.infer<typeof logMeasurementSchema>;
+ 
+diff --git a/src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts b/src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/log-ingestion/vercel-requests.pg.test.ts
+@@ -0,0 +1,50 @@
++// @vitest-environment node
++// Explicit CI-only target; uses temporary tables, never production tables or raw logs.
++import { Client } from 'pg';
++import { readFileSync } from 'node:fs';
++import { beforeAll, afterAll, describe, expect, it } from 'vitest';
++describe.skipIf(!process.env.HIMAX_GEO_PATCH_TEST_PG)('missing-IP migration constraints on isolated PostgreSQL', () => {
++let db: Client;
++const provenance={provider:'vercel-requests-v1',projectId:'prj_QAFixture',requestId:'qa-request',identityAvailability:'missing',reason:'missing_client_ip'};
++const quote=(value:unknown)=>value==null?'NULL':typeof value==='number'?String(value):`'${String(value).replaceAll("'","''")}'`;
++function insert(id:string,changes:Record<string,unknown>={}) {
++ const fields={id,ip_hash:null,ip_masked:null,bytes:null,verification:'unverified',verification_version:null,
++  verification_observed_at:null,verification_reason:'missing_client_ip',event_digest:'a'.repeat(64),status:404,
++  ip_availability:'provider_unavailable',request_provenance:JSON.stringify(provenance),...changes};
++ return `INSERT INTO liekan_log(${Object.keys(fields).join(',')}) VALUES(${Object.values(fields).map(quote).join(',')});`;
++}
++beforeAll(async()=>{
++ const value=process.env.HIMAX_GEO_PATCH_TEST_PG;
++ if(!value)throw Error('Set HIMAX_GEO_PATCH_TEST_PG to the named isolated QA database; this test must not be skipped in release CI');
++ const target=new URL(value);
++ if(!['127.0.0.1','localhost','[::1]'].includes(target.hostname)||!target.pathname.endsWith('_patch_test'))throw Error('Only loopback / *_patch_test is permitted');
++ db=new Client({connectionString:value});await db.connect();
++ await db.query(`CREATE TEMP TABLE liekan_import(id text);
++ CREATE TEMP TABLE liekan_log(id text PRIMARY KEY,ip_hash text NOT NULL,ip_masked text NOT NULL,bytes bigint NOT NULL,
++ verification text NOT NULL,verification_version text,verification_observed_at timestamptz,verification_reason text,
++ event_digest text,status int NOT NULL);
++ INSERT INTO liekan_log(id,ip_hash,ip_masked,bytes,verification,status) VALUES('legacy','','',0,'unverified',200);`);
++ await db.query(readFileSync(new URL('../../../../db/liekan/migrations/068_vercel_request_evidence.sql',import.meta.url),'utf8'));
++},15000);
++afterAll(async()=>{if(db)await db.end();});
++it('preserves legacy rows while permitting explicitly marked true missing fields',async()=>{
++ await db.query(insert('valid'));
++ expect((await db.query("SELECT ip_hash,ip_masked,bytes,verification FROM liekan_log WHERE id='valid'")).rows[0]).toEqual({ip_hash:null,ip_masked:null,bytes:null,verification:'unverified'});
++ expect((await db.query("SELECT count(*)::int AS n FROM liekan_log WHERE id='legacy'")).rows[0].n).toBe(1);
++});
++it.each([
++ ['empty IP hash',{ip_hash:''}],['empty IP display',{ip_masked:''}],['missing bytes coerced zero',{bytes:0}],
++ ['verified identity',{verification:'verified_range'}],['NULL reason bypass',{verification_reason:null}],
++ ['fake proof version',{verification_version:'fake'}],['fake proof date',{verification_observed_at:'2026-11-04T00:00:00Z'}],
++ ['missing provenance',{request_provenance:null}],['empty provenance',{request_provenance:'{}'}],
++ ['NULL JSON reason',{request_provenance:JSON.stringify({...provenance,reason:null})}],
++ ['legacy path missing IP',{ip_availability:'present'}],['missing digest',{event_digest:null}],
++] as const)('rejects %s with SQL constraint',async(name,changes)=>{
++ await expect(db.query(insert(`invalid-${name}`,changes))).rejects.toMatchObject({code:'23514'});
++});
++it('a mixed byte sample remains unknown rather than a partial total or zero',async()=>{
++ const r=await db.query('SELECT CASE WHEN count(bytes)=count(*) THEN sum(bytes)::float8 END AS total FROM liekan_log');
++ expect(r.rows[0].total).toBeNull();
++});
++
++});
+diff --git a/src/lib/liekan/log-ingestion/vercel-requests.test.ts b/src/lib/liekan/log-ingestion/vercel-requests.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/log-ingestion/vercel-requests.test.ts
+@@ -0,0 +1,128 @@
++// Synthetic QA fixtures only; no production logs, credentials, or network.
++import { describe, expect, it } from 'vitest';
++import { parseVercelRequests, vercelRequestPurpose } from './vercel-requests';
++import { logMeasurementSchema } from './measurement';
++import { getBotRules } from '../rules/bots';
++import { parseLogInput } from '../ingest';
++import { logDecision, rulepack } from '../history-repair/model';
++import { readFileSync } from 'node:fs';
++
++const website = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
++const project = 'prj_QAFixture';
++const domain = 'qa.himax.invalid';
++const now = Date.parse('2026-11-04T10:00:00Z');
++const rules = getBotRules();
++const row = (extra = {}) => ({ timestamp: '2026-11-04T09:15:00.000Z', projectId: project,
++  requestId: 'qa-request-001', requestHostname: domain, requestPath: '/en?email=private#hash',
++  requestMethod: 'GET', httpStatus: 200, environment: 'production',
++  clientUserAgent: 'Mozilla/5.0 QA Browser', clientIpCountry: 'US', ...extra });
++const batch = (records = [row()], extra = {}) => ({ format: 'vercel_requests', projectId: project,
++  environment: 'production', hostname: domain,
++  timeRange: { start: '2026-11-04T09:00:00Z', end: '2026-11-04T10:00:00Z' },
++  hasMore: false, excludedIntervals: [], records, ...extra });
++const parse = (value = batch(), id = website) => parseVercelRequests(value, domain, id, project, rules, now);
++
++describe('permission-redacted Vercel request evidence', () => {
++  it('keeps real missing identity and bytes null, actual final status, provider-declared country only', () => {
++    const result = parse(batch([row({ httpStatus: 404 })]));
++    expect(result.records[0]).toMatchObject({ ipHash: null, ipMasked: null, bytes: null, status: 404,
++      path: '/en', verification: 'unverified', verificationReason: 'missing_client_ip',
++      verificationVersion: null, verificationObservedAt: null, declaredLocation: 'US' });
++    expect(result.records[0].geography).toBeUndefined();
++    expect(result.records[0].measurement).toMatchObject({ samplingRate: null, samplingBasis: 'unknown',
++      bytesAvailability: 'missing', requestEvidence: { countryBasis: 'provider_declared', purpose: 'unclassified' } });
++    expect(logMeasurementSchema.safeParse(result.records[0].measurement).success).toBe(true);
++    expect(JSON.stringify(result)).not.toMatch(/email=private|#hash|sessionId|visitorId/);
++  });
++  it('accepts the official CLI wrapper without trusting unrelated wrapper data', () => {
++    const result = parse(batch([{ type: 'request', data: row(), irrelevant: 'not stored' }] as any));
++    expect(result.accepted).toBe(1);
++    expect(JSON.stringify(result)).not.toContain('not stored');
++  });
++  it('candidate bot UA stays unverified and cannot establish a real bot identity or browser visitor', () => {
++    const result = parse(batch([row({ clientUserAgent: 'GPTBot/1.0' })]));
++    expect(result.records[0]).toMatchObject({ bot: 'GPTBot', recognitionState: 'recognized', verification: 'unverified', ipHash: null });
++  });
++  it('rejects input when explicitly scoped project is not configured', () => {
++    expect(() => parseVercelRequests(batch(), domain, website, undefined, rules, now)).toThrow('尚未配置');
++  });
++  it.each([
++    { projectId: 'prj_other' }, { hostname: 'other.invalid' }, { hostname: `${domain}:443` },
++    { hostname: `https://${domain}/path` }, { hostname: `user@${domain}` }, { environment: 'preview' },
++  ])('rejects invalid envelope scope: %j', changes => expect(() => parse(batch(undefined, changes))).toThrow());
++  it.each([
++    { projectId: 'prj_other' }, { requestHostname: 'other.invalid' }, { environment: 'preview' },
++    { environment: undefined }, { requestPath: 'https://other.invalid/a' }, { requestPath: '/x\0y' },
++    { requestPath: '/x%00y' }, { requestId: 'id\0bad' }, { clientUserAgent: 'Himax-Production-Verification/1.0\0' },
++    { httpStatus: null }, { httpStatus: 0 }, { httpStatus: 600 }, { requestMethod: 'TRACE' },
++    { clientIp: '203.0.113.1' }, { requestId: '' }, { clientIpCountry: 'USA' },
++    { timestamp: '2026-11-04T09:15:00+00:00' }, { timestamp: '2026-11-31T09:15:00Z' },
++    { timestamp: '2026-11-04T08:59:59.999Z' }, { timestamp: '2026-11-04T10:00:00Z' },
++  ])('rejects invalid row without persisting it: %j', changes => {
++    expect(parse(batch([row(changes)]))).toMatchObject({ accepted: 0, rejected: 1, records: [] });
++  });
++  it.each([
++    { start: '2026-11-04T10:00:00Z', end: '2026-11-04T09:00:00Z' },
++    { start: '2026-11-03T20:00:00Z', end: '2026-11-04T10:00:00Z' },
++    { start: '2026-11-04T09:00:00Z', end: '2026-11-04T11:00:00Z' },
++    { start: '2026-11-31T09:00:00Z', end: '2026-11-31T10:00:00Z' },
++  ])('rejects invalid UTC window: %j', timeRange => expect(() => parse(batch(undefined, { timeRange }))).toThrow());
++  it('retains historical observation time independently of import time and never asserts complete coverage', () => {
++    const value = batch([row({ timestamp: '2026-01-01T09:15:00Z' })], {
++      timeRange: { start: '2026-01-01T09:00:00Z', end: '2026-01-01T10:00:00Z' }, hasMore: true,
++      excludedIntervals: [{ start: '2026-01-01T09:20:00Z', end: '2026-01-01T09:25:00Z' }],
++    });
++    expect(parse(value).evidence).toMatchObject({ coverage: 'bounded_export_unknown', hasMore: true,
++      timeRange: value.timeRange, excludedIntervals: value.excludedIntervals });
++  });
++  it('rejects rows within provider-excluded intervals and invalid excluded ranges', () => {
++    expect(parse(batch(undefined, { excludedIntervals: [{ start: '2026-11-04T09:15:00Z', end: '2026-11-04T09:20:00Z' }] })).accepted).toBe(0);
++    expect(() => parse(batch(undefined, { excludedIntervals: [{ start: '2026-11-04T08:00:00Z', end: '2026-11-04T09:20:00Z' }] }))).toThrow();
++  });
++  it('deduplicates repeats/overlapping exports by request only; timestamps and changed facts conflict', () => {
++    expect(parse(batch([row(), row()]))).toMatchObject({ accepted: 1, duplicateRecords: 1 });
++    const a = parse(), b = parse(batch(undefined, { timeRange: { start: '2026-11-04T08:45:00Z', end: '2026-11-04T09:45:00Z' } }));
++    expect(a.records[0].id).toBe(b.records[0].id);
++    expect(a.records[0].eventDigest).toBe(b.records[0].eventDigest);
++    expect(a.digest).not.toBe(b.digest);
++    expect(() => parse(batch([row(), row({ httpStatus: 500 })]))).toThrow('整批拒绝');
++    expect(() => parse(batch([row(), row({ timestamp: '2026-11-04T09:16:00Z' })]))).toThrow('整批拒绝');
++    expect(parse(batch(), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb').records[0].id).not.toBe(a.records[0].id);
++  });
++  it('does not turn classification rule updates into transport-content conflicts', () => {
++    const value = batch([row({ clientUserAgent: 'GPTBot/1.0' })]);
++    const a = parse(value), b = parseVercelRequests(value, domain, website, project, [], now);
++    expect(a.records[0].eventDigest).toBe(b.records[0].eventDigest);
++    expect(a.digest).toBe(b.digest);
++  });
++  it('leaves original manual-import IP guard unchanged', () => {
++    expect(parseLogInput({ format: 'json', records: [{ time: '2026-11-04T09:00:00Z', path: '/', status: 200 }] }, domain, 'qa-only')).toMatchObject({ accepted: 0, rejected: 1 });
++  });
++  it('internal purpose requires exact evidenced UA plus date; tooling does not mean owner or customer', () => {
++    expect(vercelRequestPurpose('Himax-Production-Verification/1.0', now)).toBe('internal_check');
++    expect(vercelRequestPurpose('Mozilla/5.0 HimaxAcceptance', now)).toBe('internal_check');
++    expect(vercelRequestPurpose('Himax-Production-Verification/1.0', Date.parse('2026-11-05T00:00:00Z'))).toBe('unclassified');
++    for (const ua of ['curl/8.0', 'python-requests/1.0', 'HeadlessChrome/123', 'HimaxGEOAudit/1.0 (read-only public script check)'])
++      expect(vercelRequestPurpose(ua, now)).toBe('technical_unattributed');
++    expect(vercelRequestPurpose('Himax other normal browser', now)).toBe('unclassified');
++  });
++  it('historical UA reclassification preserves missing-IP reason and cannot promote verification', () => {
++    const r = parse(batch([row({ clientUserAgent: 'GPTBot/1.0' })])).records[0];
++    const original = { bot: r.bot, vendor: r.vendor, botType: r.type, crawlerId: null,
++      aiEligible: r.aiEligible, recognitionState: r.recognitionState, recognitionCandidates: [],
++      verification: r.verification, verificationVersion: null, verificationObservedAt: null, verificationReason: r.verificationReason };
++    const pack = rulepack({ catalogVersion: website, rulesRevision: 1, rules,
++      configuration: { mode: 'official', disabledIds: [], overrides: {}, customRules: [] }, botCheckDisabled: false });
++    expect(logDecision(original, r.userAgent, pack).after).toMatchObject({ verification: 'unverified', verificationReason: 'missing_client_ip' });
++  });
++  it('keeps existing authenticated write boundary and does not insert browser identity', () => {
++    const route = readFileSync(new URL('../../../app/api/liekan/websites/[websiteId]/logs/import/route.ts', import.meta.url), 'utf8');
++    expect(route).toContain('authorize(request, websiteId, true)');
++    expect(route).toContain('writeIdentity');
++    const store = readFileSync(new URL('../store.ts', import.meta.url), 'utf8');
++    expect(store).not.toMatch(/INSERT INTO (website_event|session)\b/);
++    expect(store).toContain('lockWritableWebsite(tx, id, identity)');
++    expect(store).toContain('l.event_digest IS DISTINCT FROM');
++    expect(store).toContain('source_evidence');
++  });
++});
+diff --git a/src/lib/liekan/log-ingestion/vercel-requests.ts b/src/lib/liekan/log-ingestion/vercel-requests.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/log-ingestion/vercel-requests.ts
+@@ -0,0 +1,150 @@
++import { createHash } from 'node:crypto';
++import { z } from 'zod';
++import { canonicalPath, type LogRecord } from '@/lib/liekan/ingest';
++import { classifyBot, type BotRule } from '@/lib/liekan/rules/bots';
++import { crawlerIdForRule } from '../crawlers/directory';
++import type { LogMeasurement } from './measurement';
++import { parseStrictDate } from '@/lib/liekan/strict-date';
++
++class ConflictingRequest extends Error {}
++const VERSION = 'vercel-requests-v1';
++const utc = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/).refine(value => {
++  try { parseStrictDate(value); return true; } catch { return false; }
++});
++export const vercelRequestImportSchema = z.object({
++  format: z.literal('vercel_requests'),
++  projectId: z.string().regex(/^prj_[A-Za-z0-9]+$/),
++  environment: z.literal('production'),
++  hostname: z.string().min(1).max(253),
++  timeRange: z.object({ start: utc, end: utc }),
++  hasMore: z.boolean(),
++  excludedIntervals: z.array(z.object({ start: utc, end: utc })).max(100),
++  records: z.array(z.record(z.string(), z.unknown())).min(1).max(1000),
++});
++const recordSchema = z.object({
++  timestamp: utc,
++  projectId: z.string(),
++  requestId: z.string().min(1).max(250).refine(s => !/[\x00-\x1f]/.test(s)),
++  requestHostname: z.string().min(1).max(253),
++  requestPath: z.string().min(1).max(4096).refine(s => !/[\x00-\x1f]|%00/i.test(s)),
++  requestMethod: z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
++  httpStatus: z.number().int().min(100).max(599),
++  environment: z.literal('production'),
++  clientUserAgent: z.string().max(500).refine(s => !/[\x00-\x1f]/.test(s)),
++  clientIpCountry: z.string().regex(/^[A-Z]{2}$/).nullish(),
++  // This adapter is intentionally for permission-redacted IP, not an alternative
++  // path that silently ignores real addresses or bypasses existing IP validation.
++  clientIp: z.null().optional(),
++});
++export type RequestPurpose = 'internal_check' | 'technical_unattributed' | 'unclassified';
++const confirmedAuditAgents = new Set([
++  'Himax-Production-Verification/1.0',
++  'Mozilla/5.0 HimaxAcceptance',
++  'Himax-GEO-Release-Verification/1.0 (site-owner technical audit)',
++  'Himax-Official-Catalog-Audit/1.0',
++]);
++const auditStart = Date.parse('2026-11-03T16:00:00Z');
++const auditEnd = Date.parse('2026-11-04T16:00:00Z');
++export function vercelRequestPurpose(agent: string, time: number): RequestPurpose {
++  // Exact dedicated UAs corroborated by the owner's scripts and this dated batch.
++  if (time >= auditStart && time < auditEnd && confirmedAuditAgents.has(agent)) return 'internal_check';
++  // These indicate tooling, never prove ownership and never identify a customer.
++  if (/curl\/|python(?:-requests|-urllib)?\/|HeadlessChrome\/|HimaxGEOAudit\//i.test(agent)) return 'technical_unattributed';
++  return 'unclassified';
++}
++const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
++function host(value: string) {
++  const url = new URL(value.includes('://') ? value : `https://${value}`);
++  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port ||
++      url.pathname !== '/' || url.search || url.hash ||
++      value.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '') !== url.hostname) throw new Error('无效站点域名');
++  return url.hostname.toLowerCase();
++}
++export type VercelRequestRecord = LogRecord & { eventDigest: string; requestProvenance: NonNullable<LogMeasurement['requestEvidence']> };
++export function parseVercelRequests(
++  value: unknown,
++  domain: string,
++  websiteId: string,
++  expectedProjectId: string | undefined,
++  rules: BotRule[],
++  now = Date.now(),
++) {
++  if (!expectedProjectId) throw new Error('尚未配置本实例允许导入的 Vercel 项目');
++  if (Buffer.byteLength(JSON.stringify(value)) > 10 * 1024 * 1024) throw new Error('文件上限 10 MiB');
++  const input = vercelRequestImportSchema.parse(value);
++  if (input.projectId !== expectedProjectId || host(input.hostname) !== host(domain)) throw new Error('Vercel 项目或域名与当前站点不一致');
++  const start = +parseStrictDate(input.timeRange.start), end = +parseStrictDate(input.timeRange.end);
++  if (start >= end || end > now + 60000 || end - start > 12 * 3600000) throw new Error('日志窗口必须是有效 UTC 区间，且不超过 12 小时');
++  for (const interval of input.excludedIntervals) {
++    const a = +parseStrictDate(interval.start), b = +parseStrictDate(interval.end);
++    if (a >= b || a < start || b > end) throw new Error('缺失区间超出日志窗口');
++  }
++  const records: VercelRequestRecord[] = [], errors: { line: number; reason: string }[] = [], validLines: number[] = [];
++  const ids = new Map<string, string>();
++  let duplicateRecords = 0;
++  for (let index = 0; index < input.records.length; index++) {
++    try {
++      const candidate = input.records[index];
++      // Official CLI JSONL request records wrap the API event in data.
++      const raw = candidate.type === 'request' ? candidate.data : candidate;
++      const row = recordSchema.parse(raw);
++      const time = parseStrictDate(row.timestamp), timestamp = +time;
++      if (row.projectId !== expectedProjectId || host(row.requestHostname) !== host(domain) ||
++          timestamp < start || timestamp >= end) throw new Error('scope');
++      if (input.excludedIntervals.some(interval => timestamp >= +parseStrictDate(interval.start) && timestamp < +parseStrictDate(interval.end))) throw new Error('excluded interval');
++      const path = canonicalPath(row.requestPath, host(domain));
++      const userAgent = row.clientUserAgent;
++      const bot = classifyBot(userAgent, rules);
++      const purpose = vercelRequestPurpose(userAgent, timestamp);
++      const requestProvenance: NonNullable<LogMeasurement['requestEvidence']> = {
++        provider: VERSION, projectId: input.projectId, requestId: row.requestId,
++        identityAvailability: 'missing', reason: 'missing_client_ip', purpose,
++        purposeEvidence: purpose === 'internal_check' ? 'exact_audit_ua_20261104' : null,
++        country: row.clientIpCountry || null, countryBasis: 'provider_declared',
++        timeRange: input.timeRange, hasMore: input.hasMore, excludedIntervals: input.excludedIntervals,
++      };
++      const normalized = {
++        time: time.toISOString(), path, method: row.requestMethod, status: row.httpStatus,
++        bytes: null, ipMasked: null, ipHash: null, userAgent,
++        location: row.clientIpCountry ? `${row.clientIpCountry} (Vercel 声明，未核验 IP)` : '未知',
++        declaredLocation: row.clientIpCountry || null,
++        bot: bot.name, vendor: bot.vendor, type: bot.type,
++        verification: 'unverified', verificationVersion: null, verificationObservedAt: null,
++        verificationReason: 'missing_client_ip',
++        aiEligible: bot.aiEligible ?? ['训练', '搜索', '用户触发'].includes(bot.type),
++        recognitionState: bot.recognition ?? (crawlerIdForRule(bot) ? 'recognized' : bot.pattern ? 'custom' : 'unknown'),
++        recognitionCandidates: bot.candidateIds ?? [],
++      };
++      // Request identity only: these hashes must never populate IP/session/visitor identity.
++      const id = digest([VERSION, websiteId.toLowerCase(), input.projectId, row.requestId]);
++      // Query windows can overlap: provenance window is not part of record content identity.
++      const eventDigest = digest([VERSION, row.requestId, normalized.time, path, row.requestMethod,
++        row.httpStatus, userAgent, row.clientIpCountry || null]);
++      if (ids.has(id)) {
++        if (ids.get(id) !== eventDigest) throw new ConflictingRequest('同一 Vercel 请求标识存在不同内容；整批拒绝');
++        duplicateRecords++; continue;
++      }
++      ids.set(id, eventDigest);
++      validLines.push(index + 1);
++      records.push({ id, ...normalized, eventDigest, requestProvenance,
++        measurement: { version: 'log-measurement-v1', host: host(domain), hostBasis: 'request_host',
++          sourceConfigVersion: VERSION, samplingRate: null, samplingBasis: 'unknown',
++          bytesAvailability: 'missing', bytesUnit: 'unknown', requestEvidence: requestProvenance },
++      });
++    } catch (error) {
++      if (error instanceof ConflictingRequest) throw error;
++      errors.push({ line: index + 1, reason: 'Vercel 项目、站点、UTC 时间、字段或请求标识无效' });
++    }
++  }
++  return { records, accepted: records.length, validLines, rejected: errors.length,
++    errors: errors.slice(0, 100), duplicateRecords,
++    digest: digest([VERSION, input.projectId, input.timeRange, input.hasMore, input.excludedIntervals,
++      records.map(record => [record.id, record.eventDigest]).sort()]),
++    evidence: { provider: VERSION, identityAvailability: 'missing', coverage: 'bounded_export_unknown',
++      countsBasis: 'valid_export_records_before_storage_dedupe',
++      timeRange: input.timeRange, hasMore: input.hasMore, excludedIntervals: input.excludedIntervals,
++      internalCheckRequests: records.filter(r => r.requestProvenance.purpose === 'internal_check').length,
++      technicalUnattributedRequests: records.filter(r => r.requestProvenance.purpose === 'technical_unattributed').length,
++      unclassifiedRequests: records.filter(r => r.requestProvenance.purpose === 'unclassified').length },
++  };
++}
+diff --git a/src/lib/liekan/rules/verification-labels.ts b/src/lib/liekan/rules/verification-labels.ts
+--- a/src/lib/liekan/rules/verification-labels.ts
++++ b/src/lib/liekan/rules/verification-labels.ts
+@@ -4,6 +4,7 @@
+     {
+       no_official_source: '没有已接入的官方范围',
+       untrusted_ip: 'IP 来源尚未建立信任',
++      missing_client_ip: 'Vercel 未提供客户端 IP，仅有未核验请求证据',
+       ambiguous_name: '请求声明的名称存在歧义',
+       unmapped_identity: '未映射官方身份',
+       missing_snapshot: '缺少合格范围记录',
+diff --git a/src/lib/liekan/store.ts b/src/lib/liekan/store.ts
+--- a/src/lib/liekan/store.ts
++++ b/src/lib/liekan/store.ts
+@@ -1,3 +1,4 @@
++import { parseVercelRequests } from './log-ingestion/vercel-requests';
+ import { collectionRepairScope } from './upstream/history-repair-boundary';
+ import { getPublishedCatalog } from './crawlers/published';
+ import { withPublishedRegistry } from './upstream/crawler-registry-context';
+@@ -205,9 +206,11 @@
+   id = id.toLowerCase();
+   const settings = await getSettings(id);
+   const classificationVersion = settings.classificationVersion;
+-  let parsed: ReturnType<typeof parseLogInput>;
++  let parsed: ReturnType<typeof parseLogInput> & { evidence?: Record<string, unknown>; duplicateRecords?: number };
+   try {
+-    parsed = await parseLogInputWithGeography(
++    if (input?.format === 'vercel_requests') {
++      parsed = parseVercelRequests(input, domain, id, process.env.HIMAX_VERCEL_LOG_PROJECT_ID, settings.rules);
++    } else parsed = await parseLogInputWithGeography(
+       input,
+       domain,
+       process.env.APP_SECRET ||
+@@ -233,12 +236,20 @@
+     if ((await getSettings(id, tx)).classificationVersion !== classificationVersion)
+       throw new LiekanError('规则已被更新，请重新提交日志', 409);
+     await archiveCrawlerRules(tx, id, settings.rules, settings.crawlerRules);
++    if (input?.format === 'vercel_requests') {
++      const conflicting = await tx.$queryRawUnsafe(
++        `SELECT l.id FROM liekan_log l JOIN jsonb_to_recordset($2::jsonb) AS r(id text,"eventDigest" text)
++         ON l.id=r.id WHERE l.website_id=$1::uuid AND l.event_digest IS DISTINCT FROM r."eventDigest" LIMIT 1`,
++        id, JSON.stringify(parsed.records.map(record => ({ id: record.id, eventDigest: record.eventDigest }))),
++      );
++      if (conflicting.length) throw new LiekanError('同一 Vercel 请求标识存在不同内容；未覆盖历史记录', 409);
++    }
+     const old = await tx.$queryRawUnsafe(
+       'SELECT id,accepted,rejected FROM liekan_import WHERE website_id=$1::uuid AND digest=$2',
+       id,
+       parsed.digest,
+     );
+-    if (old.length) return { ...old[0], duplicate: true, inserted: 0, errors: parsed.errors };
++    if (old.length) return { ...old[0], duplicate: true, inserted: 0, errors: parsed.errors, ...(parsed.evidence ? { evidence: parsed.evidence } : {}) };
+     const rate = await tx.$queryRawUnsafe(
+       "SELECT count(*)::int AS count FROM liekan_import WHERE website_id=$1::uuid AND kind='manual' AND imported_at>now()-interval '1 minute'",
+       id,
+@@ -267,20 +278,21 @@
+     if (!allowed.length) throw new LiekanError('日志时间范围与自动来源重叠，请导入其他时间段', 409);
+     const importId = randomUUID();
+     await tx.$executeRawUnsafe(
+-      'INSERT INTO liekan_import (id,website_id,digest,accepted,rejected,repair_scope_id) VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::uuid)',
++      'INSERT INTO liekan_import (id,website_id,digest,accepted,rejected,repair_scope_id,source_evidence) VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7::jsonb)',
+       importId,
+       id,
+       parsed.digest,
+       parsed.accepted,
+       parsed.rejected,
+       await collectionRepairScope(tx,id),
++      parsed.evidence ? JSON.stringify(parsed.evidence) : null,
+     );
+     let inserted = 0;
+     for (let offset = 0; offset < parsed.records.length; offset += 500) {
+       inserted += await tx.$executeRawUnsafe(
+-        `INSERT INTO liekan_log(id,website_id,import_id,created_at,path,method,status,bytes,ip_masked,ip_hash,user_agent,location,bot,vendor,bot_type,verification,verification_version,ai_eligible,recognition_state,recognition_candidates,verification_observed_at,verification_reason)
+-        SELECT r.id,$1::uuid,$2::uuid,r.time::timestamptz,r.path,r.method,r.status,r.bytes,r."ipMasked",r."ipHash",r."userAgent",r.location,r.bot,r.vendor,r.type,r.verification,r."verificationVersion",r."aiEligible",r."recognitionState",r."recognitionCandidates",r."verificationObservedAt"::timestamptz,r."verificationReason"
+-        FROM jsonb_to_recordset($3::jsonb) AS r(id text,time text,path text,method text,status integer,bytes bigint,"ipMasked" text,"ipHash" text,"userAgent" text,location text,bot text,vendor text,type text,verification text,"verificationVersion" text,"aiEligible" boolean,"recognitionState" text,"recognitionCandidates" jsonb,"verificationObservedAt" text,"verificationReason" text)
++        `INSERT INTO liekan_log(id,website_id,import_id,created_at,path,method,status,bytes,ip_masked,ip_hash,user_agent,location,bot,vendor,bot_type,verification,verification_version,ai_eligible,recognition_state,recognition_candidates,verification_observed_at,verification_reason,event_digest,ip_availability,request_provenance)
++        SELECT r.id,$1::uuid,$2::uuid,r.time::timestamptz,r.path,r.method,r.status,r.bytes,r."ipMasked",r."ipHash",r."userAgent",r.location,r.bot,r.vendor,r.type,r.verification,r."verificationVersion",r."aiEligible",r."recognitionState",r."recognitionCandidates",r."verificationObservedAt"::timestamptz,r."verificationReason",r."eventDigest",CASE WHEN r."requestProvenance" IS NOT NULL THEN 'provider_unavailable' ELSE 'present' END,r."requestProvenance"
++        FROM jsonb_to_recordset($3::jsonb) AS r(id text,time text,path text,method text,status integer,bytes bigint,"ipMasked" text,"ipHash" text,"userAgent" text,location text,bot text,vendor text,type text,verification text,"verificationVersion" text,"aiEligible" boolean,"recognitionState" text,"recognitionCandidates" jsonb,"verificationObservedAt" text,"verificationReason" text,"eventDigest" text,"requestProvenance" jsonb)
+         ON CONFLICT(website_id,id) DO NOTHING`,
+         id,
+         importId,
+@@ -311,6 +323,7 @@
+       inserted,
+       duplicate: false,
+       errors: parsed.errors,
++      ...(parsed.evidence ? { evidence: parsed.evidence, duplicateRecords: parsed.duplicateRecords } : {}),
+     };
+   });
+   invalidateWebsiteAnalytics(id);
+diff --git a/src/lib/liekan/upstream/geo-weight-sql.ts b/src/lib/liekan/upstream/geo-weight-sql.ts
+--- a/src/lib/liekan/upstream/geo-weight-sql.ts
++++ b/src/lib/liekan/upstream/geo-weight-sql.ts
+@@ -22,7 +22,7 @@
+     ), raw AS MATERIALIZED (
+       SELECT l.id,l.created_at,l.path,l.method,l.status,l.source_id,l.ai_eligible,l.recognition_state,
+         l.verification,l.verification_version,l.verification_observed_at,l.verification_reason,
+-        l.user_agent LIKE 'Liekan-Crawler-Check/%' AS self_check,
++        (l.user_agent LIKE 'Liekan-Crawler-Check/%' OR COALESCE(e.measurement#>>'{requestEvidence,purpose}'='internal_check',false)) AS self_check,
+         e.crawler_id,e.catalog_version,e.classification_version,e.measurement,e.identity_evidence,
+         e.edge_observation#>>'{fields,EdgeResponseContentType,state}' AS mime_state,
+         e.edge_observation#>>'{fields,EdgeResponseContentType,value}' AS mime,
+diff --git a/src/lib/liekan/upstream/logs.ts b/src/lib/liekan/upstream/logs.ts
+--- a/src/lib/liekan/upstream/logs.ts
++++ b/src/lib/liekan/upstream/logs.ts
+@@ -245,7 +245,7 @@
+       : Promise.resolve([]),
+     needs('recent')
+       ? read(
+-          `SELECT id AS "recordId",created_at AS time,ip_masked AS "ipMasked",location,method,path,status,user_agent AS "userAgent",bot,l.reporting_crawler_id AS "botId",l.reporting_catalog_version AS "catalogVersion",e.identity_evidence AS "identityEvidence",bot_type AS "botType",verification,${crawlerAiSql()} AS "aiEligible",recognition_state AS "recognitionState",verification_version AS "verificationVersion",verification_observed_at AS "verificationObservedAt",verification_reason AS "verificationReason" ${identityBase}${filterSql} AND strpos(lower(concat_ws(' ',path,user_agent,method,status::text,ip_masked,location,bot,bot_type,CASE verification WHEN 'verified_range' THEN '官方 IP 范围匹配' WHEN 'verified_dns' THEN '官方 DNS 双向核验' WHEN 'verified_edge' THEN '可信边缘身份核验' WHEN 'range_mismatch' THEN '官方范围未匹配' ELSE '身份未核验' END)) ,lower($5))>0 ${seekSql} ORDER BY created_at ${direction},id ${direction} LIMIT ${fullExport ? 100001 : 100}${paginationSql}`,
++          `SELECT id AS "recordId",created_at AS time,ip_masked AS "ipMasked",e.measurement#>>'{requestEvidence,purpose}' AS "requestPurpose",e.measurement#>>'{requestEvidence,reason}' AS "ipUnavailableReason",location,method,path,status,user_agent AS "userAgent",bot,l.reporting_crawler_id AS "botId",l.reporting_catalog_version AS "catalogVersion",e.identity_evidence AS "identityEvidence",bot_type AS "botType",verification,${crawlerAiSql()} AS "aiEligible",recognition_state AS "recognitionState",verification_version AS "verificationVersion",verification_observed_at AS "verificationObservedAt",verification_reason AS "verificationReason" ${identityBase}${filterSql} AND strpos(lower(concat_ws(' ',path,user_agent,method,status::text,ip_masked,location,bot,bot_type,CASE verification WHEN 'verified_range' THEN '官方 IP 范围匹配' WHEN 'verified_dns' THEN '官方 DNS 双向核验' WHEN 'verified_edge' THEN '可信边缘身份核验' WHEN 'range_mismatch' THEN '官方范围未匹配' ELSE '身份未核验' END)) ,lower($5))>0 ${seekSql} ORDER BY created_at ${direction},id ${direction} LIMIT ${fullExport ? 100001 : 100}${paginationSql}`,
+           ...args,
+           search,
+           ...(cursor ? boundary : [(page - 1) * 100]),
+diff --git a/src/lib/liekan/vercel-import.test.ts b/src/lib/liekan/vercel-import.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/vercel-import.test.ts
+@@ -0,0 +1,75 @@
++// @vitest-environment node
++import { beforeEach, afterEach, expect, it, vi } from 'vitest';
++const m = vi.hoisted(() => ({ query: vi.fn(), execute: vi.fn(), lock: vi.fn(), geographic: vi.fn(),
++  receipt: null as any, existing: new Map<string,string>(), writes: [] as any[], receipts: [] as any[] }));
++vi.mock('./upstream/server', () => ({
++  LiekanError: class extends Error { constructor(message:string, public status=400) {super(message);} },
++  query: m.query, lockWritableWebsite: m.lock,
++  transaction: async (f:any) => f({ $queryRawUnsafe:m.query, $executeRawUnsafe:m.execute }),
++}));
++vi.mock('./upstream/crawler-registry-context', () => ({ withPublishedRegistry: (f:any) => f() }));
++vi.mock('./crawlers/published', () => ({ getPublishedCatalog: () => null }));
++vi.mock('./upstream/log-geography', () => ({ parseLogInputWithGeography:m.geographic, persistLogGeography:vi.fn() }));
++vi.mock('./upstream/query-cache', () => ({ invalidateWebsiteAnalytics:vi.fn() }));
++vi.mock('./upstream/analytics-revision', () => ({ bumpAnalyticsRevision:vi.fn() }));
++vi.mock('./upstream/robots-draft', () => ({ syncLegacyRobotsDraft:vi.fn() }));
++vi.mock('./upstream/history-repair-boundary', () => ({ collectionRepairScope:async()=>null }));
++vi.mock('./log-ingestion/ranges', () => ({ verificationSnapshots:vi.fn(()=> {throw Error('IP lookup forbidden in adapter test');}) }));
++vi.mock('./log-ingestion/crawler-evidence', () => ({
++  crawlerClassificationVersion:()=> 'qa-stable-rules', crawlerIdentityId:()=>null,
++  archiveCrawlerRules:vi.fn(), persistCrawlerEvidence:vi.fn(),
++}));
++import { importLogs } from './store';
++const project='prj_QAFixture', website='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
++const identity={userId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'};
++const record=(extra={})=>({timestamp:'2026-11-04T09:15:00Z',projectId:project,requestId:'qa-001',
++ requestHostname:'qa.himax.invalid',requestPath:'/',requestMethod:'GET',httpStatus:200,
++ environment:'production',clientUserAgent:'Mozilla/5.0 QA',...extra});
++const input=(extra={})=>({format:'vercel_requests',projectId:project,environment:'production',hostname:'qa.himax.invalid',
++ timeRange:{start:'2026-11-04T09:00:00Z',end:'2026-11-04T10:00:00Z'},hasMore:false,excludedIntervals:[],records:[record()],...extra});
++beforeEach(()=>{
++ vi.clearAllMocks();vi.stubEnv('HIMAX_VERCEL_LOG_PROJECT_ID',project);vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-04T11:00:00Z'));
++ m.receipt=null;m.existing.clear();m.writes=[];m.receipts=[];
++ m.query.mockImplementation(async (sql:string,...args:any[])=>{
++  if(sql.includes('pg_try_advisory_xact_lock'))return [{acquired:true}];
++  if(sql.includes('SELECT s.robots'))return [];
++  if(sql.includes('l.event_digest IS DISTINCT FROM'))return JSON.parse(args[1]).filter((r:any)=>m.existing.has(r.id)&&m.existing.get(r.id)!==r.eventDigest);
++  if(sql.includes('SELECT id,accepted,rejected FROM liekan_import'))return m.receipt?[m.receipt]:[];
++  if(sql.includes('count(*)::int AS count'))return [{count:0}];
++  if(sql.includes('SELECT starts_at,ends_at'))return [];
++  throw Error('unexpected query in isolated mock');
++ });
++ m.execute.mockImplementation(async (sql:string,...args:any[])=>{
++  m.writes.push({sql,args});
++  if(sql.startsWith('INSERT INTO liekan_import')) { m.receipts.push(JSON.parse(args[6]));return 1; }
++  if(sql.startsWith('INSERT INTO liekan_log(')) {let inserted=0;for(const r of JSON.parse(args[2]))if(!m.existing.has(r.id)){m.existing.set(r.id,r.eventDigest);inserted++;}return inserted;}
++  return 1;
++ });
++});
++afterEach(()=>{vi.useRealTimers();vi.unstubAllEnvs();});
++it('writes true nulls through existing authorized site lock and does not perform IP lookup',async()=>{
++ const result=await importLogs(website,'qa.himax.invalid',input(),identity);
++ expect(result).toMatchObject({inserted:1,accepted:1,duplicate:false});
++ expect(m.lock).toHaveBeenCalledWith(expect.anything(),website,identity);
++ expect(m.geographic).not.toHaveBeenCalled();
++ const write=m.writes.find(w=>w.sql.startsWith('INSERT INTO liekan_log('));
++ expect(JSON.parse(write.args[2])[0]).toMatchObject({ipHash:null,ipMasked:null,bytes:null,verification:'unverified'});
++ expect(m.receipts[0]).toMatchObject({identityAvailability:'missing',coverage:'bounded_export_unknown',timeRange:input().timeRange});
++});
++it('same export receipt is idempotent without another write',async()=>{
++ m.receipt={id:'previous-receipt',accepted:1,rejected:0};
++ const result=await importLogs(website,'qa.himax.invalid',input(),identity);
++ expect(result).toMatchObject({id:'previous-receipt',duplicate:true,inserted:0});expect(m.writes).toHaveLength(0);
++});
++it('overlapping export retains its own receipt window without another request',async()=>{
++ await importLogs(website,'qa.himax.invalid',input(),identity);
++ const range={start:'2026-11-04T08:45:00Z',end:'2026-11-04T09:45:00Z'};
++ const result=await importLogs(website,'qa.himax.invalid',input({timeRange:range}),identity);
++ expect(result).toMatchObject({inserted:0,accepted:1,duplicate:false});
++ expect(m.existing.size).toBe(1);expect(m.receipts[1].timeRange).toEqual(range);
++});
++it('conflicting contents for an imported request returns409 before any new write',async()=>{
++ await importLogs(website,'qa.himax.invalid',input(),identity);m.writes=[];
++ await expect(importLogs(website,'qa.himax.invalid',input({records:[record({httpStatus:500})]}),identity)).rejects.toMatchObject({status:409});
++ expect(m.writes).toHaveLength(0);
++});
+diff --git a/db/liekan/migrations/068_vercel_request_evidence.sql b/db/liekan/migrations/068_vercel_request_evidence.sql
+new file mode 100644
+--- /dev/null
++++ b/db/liekan/migrations/068_vercel_request_evidence.sql
+@@ -0,0 +1,25 @@
++-- Dedicated Himax instance: permission-redacted provider requests are not visitors.
++-- Legacy imports/automatic collectors keep their original non-null IP contract.
++ALTER TABLE liekan_import ADD COLUMN source_evidence jsonb;
++ALTER TABLE liekan_log ADD COLUMN ip_availability text NOT NULL DEFAULT 'present';
++ALTER TABLE liekan_log ADD COLUMN request_provenance jsonb;
++ALTER TABLE liekan_log ALTER COLUMN ip_hash DROP NOT NULL;
++ALTER TABLE liekan_log ALTER COLUMN ip_masked DROP NOT NULL;
++ALTER TABLE liekan_log ALTER COLUMN bytes DROP NOT NULL;
++ALTER TABLE liekan_log ADD CONSTRAINT liekan_log_ip_availability CHECK (COALESCE(
++  (ip_availability='present' AND ip_hash IS NOT NULL AND ip_masked IS NOT NULL
++    AND bytes IS NOT NULL AND request_provenance IS NULL)
++  OR
++  (ip_availability='provider_unavailable' AND ip_hash IS NULL AND ip_masked IS NULL
++    AND bytes IS NULL AND verification='unverified'
++    AND verification_version IS NULL AND verification_observed_at IS NULL
++    AND verification_reason='missing_client_ip' AND event_digest IS NOT NULL
++    AND COALESCE(jsonb_typeof(request_provenance)='object'
++      AND request_provenance->>'provider'='vercel-requests-v1'
++      AND request_provenance->>'identityAvailability'='missing'
++      AND request_provenance->>'reason'='missing_client_ip'
++      AND request_provenance->>'projectId' ~ '^prj_[A-Za-z0-9]+$'
++      AND length(request_provenance->>'requestId') BETWEEN 1 AND 250, false))
++, false));
++-- Status remains a known final HTTP response. Inbound proxy observations are a
++-- different source stage and MUST NOT use this adapter or synthesize status=200.

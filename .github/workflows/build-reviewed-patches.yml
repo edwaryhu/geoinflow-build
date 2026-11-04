@@ -1,0 +1,155 @@
+name: Build reviewed GEOInflow patches (no deployment)
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: geoinflow-pinned-build
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      SOURCE_SHA: 6ba7c79d8d263ff620911fdccd90dd90be85dfb7
+      APP_IMAGE: geoinflow-local:patched-ci
+    steps:
+    - name: Fetch fixed public source and verify exact public patch series
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir build-config source output
+        git -C build-config init -q
+        git -C build-config remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+        git -C build-config fetch -q --depth=1 origin "$GITHUB_SHA"
+        git -C build-config checkout -q --detach FETCH_HEAD
+        git -C source init -q
+        git -C source remote add origin https://github.com/yaojingang/GEOInflow.git
+        git -C source fetch -q --depth=1 origin "$SOURCE_SHA"
+        git -C source checkout -q --detach FETCH_HEAD
+        test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+        python3 - <<'CHECK'
+        import hashlib,json,os,re,subprocess
+        from pathlib import Path
+        root=Path('build-config'); manifest=json.loads((root/'patches/series.json').read_text())
+        assert manifest['source_sha']==os.environ['SOURCE_SHA']
+        assert [p['path'] for p in manifest['patches']]==['patches/null-funnel.patch','patches/vercel-missing-ip.patch','patches/vercel-history.patch']
+        for p in manifest['patches']:
+         assert re.fullmatch('[a-f0-9]{64}',p['sha256'])
+         file=root/p['path'];assert file.is_file() and not file.is_symlink()
+         assert hashlib.sha256(file.read_bytes()).hexdigest()==p['sha256']
+         subprocess.run(['git','-C','source','apply','--check',str(file.resolve())],check=True)
+         subprocess.run(['git','-C','source','apply',str(file.resolve())],check=True)
+        assert len(manifest['test_files'])==12
+        for name in manifest['test_files']:
+         assert re.fullmatch(r'src/[A-Za-z0-9_/\[\].-]+\.test\.tsx?',name) and '..' not in name
+         assert (Path('source')/name).is_file()
+        Path('output/patch-series.json').write_text(json.dumps(manifest,indent=2)+'\n')
+        Path('output/patch-series.sha256').write_text(hashlib.sha256((root/'patches/series.json').read_bytes()).hexdigest()+'\n')
+        Path('output/build-source.json').write_text(json.dumps({'upstream_sha':os.environ['SOURCE_SHA'],'build_repository_sha':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],'scope':'public upstream plus reviewed public patches; no deployment credentials or private site sources'},indent=2)+'\n')
+        CHECK
+        cp source/LICENSE output/GEOINFLOW-LICENSE
+        cp build-config/patches/*.patch output/
+    - name: Run targeted tests including isolated PostgreSQL semantics
+      id: tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker build --file source/Dockerfile.liekan --target dependencies --tag geoinflow-patch-deps source
+        docker pull postgres:16-alpine
+        password=$(openssl rand -hex 24)
+        printf '::add-mask::%s\n' "$password"
+        printf 'HIMAX_GEO_PATCH_TEST_PG=postgresql://probe:%s@127.0.0.1:16540/himax_patch_test\n' "$password" > "$RUNNER_TEMP/test.env"
+        chmod 600 "$RUNNER_TEMP/test.env"
+        cleanup() { docker rm -fv patch-test-db >/dev/null 2>&1 || true; rm -f "$RUNNER_TEMP/test.env"; }
+        trap cleanup EXIT
+        docker run -d --name patch-test-db -p 127.0.0.1:16540:5432 --memory=256m --memory-swap=256m \
+         -e POSTGRES_USER=probe -e POSTGRES_DB=himax_patch_test -e POSTGRES_PASSWORD="$password" \
+         postgres:16-alpine postgres -c jit=off -c statement_timeout=3000 >/dev/null
+        ready=0
+        for i in {1..30}; do
+         if docker exec patch-test-db pg_isready -U probe -d himax_patch_test >/dev/null; then ready=1; break; fi
+         sleep 1
+        done
+        test "$ready" = 1
+        python3 - <<'FILES'
+        import json
+        from pathlib import Path
+        m=json.loads(Path('build-config/patches/series.json').read_text())
+        Path('source/.himax-test-list.json').write_text(json.dumps(m['test_files']))
+        FILES
+        docker run --rm --network host --env-file "$RUNNER_TEMP/test.env" \
+         -v "$PWD/source:/input:ro" -v "$PWD/output:/results" -v "$PWD/build-config/ci:/ci:ro" \
+         geoinflow-patch-deps sh -ec 'cp -a /input/. /app/; node /ci/run-targeted-tests.mjs'
+        python3 - <<'ASSERT'
+        import json
+        from pathlib import Path
+        r=json.loads(Path('output/targeted-tests.json').read_text())
+        assert r['success'] and r['numFailedTests']==0 and r['numPendingTests']==0
+        assert r['numPassedTests']>=124
+        print('All targeted tests including disposable PostgreSQL SQL semantics and UI missing-values passed')
+        ASSERT
+        rm source/.himax-test-list.json
+    - name: Build official Dockerfile (including generated nullable API clients)
+      id: image
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker build --progress=plain --file source/Dockerfile.liekan \
+         --build-arg LIEKAN_REVISION="$SOURCE_SHA-patched-$GITHUB_SHA" --tag "$APP_IMAGE" source
+        docker pull postgres:16-alpine
+        docker pull redis:7.4-alpine
+        docker image inspect "$APP_IMAGE" postgres:16-alpine redis:7.4-alpine > output/image-manifest.json
+    - name: Limited synthetic probe under shared 900MiB budget
+      id: probe
+      continue-on-error: true
+      shell: bash
+      run: bash build-config/ci/probe-runtime.sh
+    - name: Export only never-started app image after a successful probe
+      if: steps.probe.outcome == 'success'
+      shell: bash
+      run: |
+        set -euo pipefail
+        container=$(docker create "$APP_IMAGE")
+        trap 'docker rm -v "$container" >/dev/null 2>&1 || true' EXIT
+        docker export "$container" | gzip -6 > output/app-rootfs.tar.gz
+        gzip -dc output/app-rootfs.tar.gz | wc -c > output/app-rootfs-uncompressed-bytes.txt
+        test "$(stat -c%s output/app-rootfs.tar.gz)" -lt 2147483648
+        # Never export any started probe container, database, Redis volume, or environment file.
+    - name: Publish immutable experimental build and small evidence
+      if: always() && steps.image.outcome == 'success'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PROBE_OUTCOME: ${{ steps.probe.outcome }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p output
+        printf '%s\n' "$PROBE_OUTCOME" > output/runtime3-probe-outcome.txt
+        # Bundle small records: Release rejects zero-byte uploads; retain empty logs in the JSON bundle.
+        python3 - <<'BUNDLE'
+        import json,hashlib
+        from pathlib import Path
+        files={}
+        for p in sorted(Path('output').iterdir()):
+         if p.name=='app-rootfs.tar.gz':continue
+         b=p.read_bytes();files[p.name]={'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'text':b.decode('utf-8',errors='replace')}
+        Path('output/build-records.json').write_text(json.dumps(files,indent=2)+'\n')
+        BUNDLE
+        mkdir release
+        cp output/build-records.json output/GEOINFLOW-LICENSE output/patch-series.json release/
+        if test -f output/app-rootfs.tar.gz; then mv output/app-rootfs.tar.gz release/; fi
+        (cd release && sha256sum * > SHA256SUMS)
+        tag="patch-${SOURCE_SHA:0:12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        printf 'Experimental pinned-source rebuild with reviewed public patches. No company code, credentials or visitor records.\n\nLimited synthetic probe outcome: %s. No traffic-capacity guarantee. Official Dockerfile regenerates API clients. This build does not deploy or migrate any server. Existing PostgreSQL/Redis root filesystems are not included or replaced. Patch series and source identity are recorded.\n' "$PROBE_OUTCOME" > "$RUNNER_TEMP/release-notes.md"
+        gh release create "$tag" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+         --prerelease --title "Experimental patched GEOInflow ${SOURCE_SHA:0:12}" --notes-file "$RUNNER_TEMP/release-notes.md"
+    - name: Require actual probe success
+      if: always() && steps.image.outcome == 'success'
+      shell: bash
+      env:
+        PROBE_OUTCOME: ${{ steps.probe.outcome }}
+      run: test "$PROBE_OUTCOME" = success
