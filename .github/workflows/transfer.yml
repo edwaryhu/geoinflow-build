@@ -1,0 +1,45 @@
+name: Transfer verified public runtime to temporary receiver
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: geoinflow-artifact-transfer
+  cancel-in-progress: false
+jobs:
+  transfer:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Download and verify public artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir artifacts
+          cd artifacts
+          base='https://github.com/edwaryhu/geoinflow-build/releases/download/build-6ba7c79d8d26-41787092963-1'
+          for name in redis postgres app; do
+            curl --fail --silent --show-error --location --retry 3 --max-time 600 "$base/$name-rootfs.tar.gz" -o "$name-rootfs.tar.gz"
+          done
+          printf '%s\n' \
+            'e0320740792ecb4796bfc25c8ae724ec48fa27c1001753b31770b6b6a5cb8aec  app-rootfs.tar.gz' \
+            '075a50077456dd769ca1cd687dd8fd4e5eeb44513f3186e15139e584286bae2b  postgres-rootfs.tar.gz' \
+            '45f7d04db6e179dce1988dfa1f5b6585f49a155a61f3517a4720eb87207f4c6d  redis-rootfs.tar.gz' | sha256sum --check
+      - name: Send allowlisted files over HTTPS
+        env:
+          TRANSFER_TOKEN: ${{ secrets.GEOINFLOW_TRANSFER_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TRANSFER_TOKEN"
+          for name in redis postgres app; do
+            curl --fail --silent --show-error --request PUT \
+              --header "Authorization: Bearer $TRANSFER_TOKEN" \
+              --connect-timeout 20 --max-time 1800 \
+              --upload-file "artifacts/$name-rootfs.tar.gz" \
+              --dump-header "$RUNNER_TEMP/receipt-$name.txt" \
+              "https://geo.azuaiai.com/_runtime-transfer/artifacts/$name-rootfs.tar.gz"
+            printf 'Verified receiver receipt for %s\n' "$name"
+            grep -i '^X-Artifact-' "$RUNNER_TEMP/receipt-$name.txt"
+          done
