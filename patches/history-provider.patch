@@ -57,7 +57,7 @@
 +      vercelHistory={<VercelHistory key={`${userId}:${websiteId}`} userId={userId} websiteId={websiteId} />} />
 +  </QueryClientProvider>;
 +}
-+beforeEach(() => calls.get.mockReset());
++beforeEach(() => { calls.get.mockReset(); });
 +afterEach(() => { for (const c of clients.splice(0)) c.clear(); });
 +describe('overview historical read without a FeatureProvider', () => {
 +  it.each([true, false])('loads the authorized history in overview, crawler display=%s', async ai => {

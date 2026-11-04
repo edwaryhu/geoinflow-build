@@ -31,11 +31,11 @@
     },
     {
       "path": "patches/history-provider.patch",
-      "sha256": "bc5767cbc6f10014a56d584f491bdf35509256f39a793effc6c1f2e1324ea275"
+      "sha256": "e4f223d6ba758611094b894bfa93175d39b15bf806808c0ff08cac232351831f"
     },
     {
       "path": "patches/identity-weight-compare.patch",
-      "sha256": "5958516053f5759f975c2d0fca08aea1cb1ca8a38d480404793a4438128e76bb"
+      "sha256": "17f793e6cf88acff044aa270253f192975dfc294fc82851879170a77b7f92337"
     }
   ],
   "test_files": [
@@ -62,7 +62,7 @@
     "src/components/liekan/features/analytics-pages.test.tsx",
     "src/components/liekan/features/geo-weight.test.tsx"
   ],
-  "minimum_passed_tests": 228,
+  "minimum_passed_tests": 335,
   "required_skipped_tests": 0,
   "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots.",
   "integration_tests": {

@@ -240,7 +240,22 @@
      r?.population?.metricScope === 'qualified-browser' && !identityUsable(r.population)
 --- a/src/components/liekan/features/analytics-pages.test.tsx
 +++ b/src/components/liekan/features/analytics-pages.test.tsx
-@@ -632,3 +632,39 @@
+@@ -587,7 +587,7 @@
+   expect(chart.series[1].values).toEqual([null]);
+ });
+ 
+-it('keeps a measured empty comparison period at zero and marks a new source', () => {
++it('keeps a measured empty comparison period at zero without a growth percentage', () => {
+   mocks.context.range = {
+     startAt: Date.parse('2026-01-09T00:00:00Z'),
+     endAt: Date.parse('2026-01-10T00:00:00Z') - 1,
+@@ -628,7 +628,44 @@
+   render(<AnalyticsPages page="compare" />);
+   const row = screen.getByRole('cell', { name: '直接访问' }).closest('tr');
+   expect(row).toHaveTextContent('0');
+-  expect(row).toHaveTextContent('新增');
++  expect(row.cells[3]).toHaveTextContent('—');
++  expect(row).not.toHaveTextContent('新增');
    const chart = JSON.parse(screen.getByRole('img', { name: '同期访问趋势' }).textContent);
    expect(chart.series[1].values).toEqual([0]);
  });
