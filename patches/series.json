@@ -12,6 +12,10 @@
     {
       "path": "patches/vercel-history.patch",
       "sha256": "1b470cece36437051f3297f75865e26afe7f8c765251a910fc35f17d77f90173"
+    },
+    {
+      "path": "patches/observation-clarity.patch",
+      "sha256": "b90068eb3fd03a6674833d5112ee1f7c1ae57cb8fccaa9d28ee085189cbb49f1"
     }
   ],
   "test_files": [

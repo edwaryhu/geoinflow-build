@@ -36,7 +36,7 @@ jobs:
         from pathlib import Path
         root=Path('build-config'); manifest=json.loads((root/'patches/series.json').read_text())
         assert manifest['source_sha']==os.environ['SOURCE_SHA']
-        assert [p['path'] for p in manifest['patches']]==['patches/null-funnel.patch','patches/vercel-missing-ip.patch','patches/vercel-history.patch']
+        assert [p['path'] for p in manifest['patches']]==['patches/null-funnel.patch','patches/vercel-missing-ip.patch','patches/vercel-history.patch','patches/observation-clarity.patch']
         for p in manifest['patches']:
          assert re.fullmatch('[a-f0-9]{64}',p['sha256'])
          file=root/p['path'];assert file.is_file() and not file.is_symlink()

@@ -1,0 +1,80 @@
+--- a/src/components/liekan/pages/AiPages.tsx
++++ b/src/components/liekan/pages/AiPages.tsx
+@@ -49,6 +49,7 @@
+       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+         <MetricCard
+           label="被 AI 抓取页面"
++          displayLabel="本期观测到的请求路径"
+           className="card p-4 fade-in d1"
+           valueClass="num text-[24px] font-bold text-brand mt-1.5"
+           report={report}
+@@ -61,6 +62,7 @@
+         />
+         <MetricCard
+           label="从未被抓页面"
++          displayLabel="本期未观测的目录页"
+           className="card p-4 fade-in d1"
+           valueClass="num text-[24px] font-bold text-up mt-1.5"
+           report={report}
+@@ -72,6 +74,9 @@
+           report={report}
+         />
+       </section>
++      <p className="text-[12px] text-sub leading-relaxed">
++        {i18n.text('请求路径可包含 robots.txt、sitemap.xml 等资源；未观测清单仅统计已导入目录页，两者分母不同。')}
++      </p>
+       <section className="card fade-in d2 overflow-hidden">
+         <div className="px-6 py-4 border-b border-line flex crawler-page-controls items-center justify-between gap-3">
+           <h2 className="text-[14px] font-bold tracking-tight">
+@@ -185,9 +190,15 @@
+         <div className="card fade-in d3 overflow-hidden">
+           <div className="px-6 py-4 border-b border-line flex items-center justify-between">
+             <h2 className="text-[14px] font-bold tracking-tight">
+-              {i18n.text('AI 盲区（从未被抓取的页面）')}
++              {i18n.text('未观测到 AI 抓取的目录页')}
+             </h2>
+-            <span className="bd bd-amber">{i18n.text('建议治理')}</span>
++            <span className="bd bd-amber">{i18n.text('待核查')}</span>
++          </div>
++          <div className="px-6 py-4 border-b border-line space-y-2 text-[12px] text-sub leading-relaxed">
++            <p>{i18n.system(rangeLabel)}</p>
++            <p>{i18n.text('仅表示所选时间与筛选条件内，已接入日志没有匹配记录，不代表这些页面从未被抓取。')}</p>
++            <p>{i18n.text('先检查页面可访问性、robots、站点地图与内链；技术正常的页面继续观察，并根据真实客户问题补充有依据的内容。')}</p>
++            <p>{i18n.text('日志可能未覆盖完整日期范围；爬虫名称匹配不等于已验证身份，抓取也不等于索引或 AI 引用。')}</p>
+           </div>
+           <ReportList
+             id="blindList"
+--- a/src/lib/liekan/i18n/messages/en-US.json
++++ b/src/lib/liekan/i18n/messages/en-US.json
+@@ -5110,5 +5110,13 @@
+   "m_b6ef64da451f": "The saved draft has changed. Your edits are preserved; review the latest draft before merging.",
+   "m_c70719bf7ba0": "View latest saved draft",
+   "m_70711de3d64a": "I have reviewed the latest draft and confirm replacing my current edits.",
+-  "m_509d4914dce1": "Load latest saved draft into editor"
++  "m_509d4914dce1": "Load latest saved draft into editor",
++  "himax-observation-clarity-1": "Paths with observed crawler requests",
++  "himax-observation-clarity-2": "Catalog pages without observations",
++  "himax-observation-clarity-3": "Catalog pages without observed AI crawls",
++  "himax-observation-clarity-4": "To review",
++  "himax-observation-clarity-5": "No matching records were found in connected logs for the selected period and filters. This does not mean these pages have never been crawled.",
++  "himax-observation-clarity-6": "Check page accessibility, robots, sitemaps and internal links first. Keep monitoring healthy pages and improve content using real customer questions and verifiable evidence.",
++  "himax-observation-clarity-7": "Logs may not cover the full date range. A matching crawler name does not verify its identity, and crawling does not establish indexing or AI citations.",
++  "himax-observation-clarity-8": "Observed paths may include resources such as robots.txt and sitemap.xml. The unobserved list contains imported catalog pages only; the denominators differ."
+ }
+--- a/src/lib/liekan/i18n/messages/zh-CN.json
++++ b/src/lib/liekan/i18n/messages/zh-CN.json
+@@ -5110,5 +5110,13 @@
+   "m_b6ef64da451f": "已保存草稿已更新。当前编辑内容已保留，请核对最新草稿后合并。",
+   "m_c70719bf7ba0": "查看最新保存草稿",
+   "m_70711de3d64a": "我已核对最新草稿，确认替换当前编辑内容。",
+-  "m_509d4914dce1": "将最新保存草稿载入编辑器"
++  "m_509d4914dce1": "将最新保存草稿载入编辑器",
++  "himax-observation-clarity-1": "本期观测到的请求路径",
++  "himax-observation-clarity-2": "本期未观测的目录页",
++  "himax-observation-clarity-3": "未观测到 AI 抓取的目录页",
++  "himax-observation-clarity-4": "待核查",
++  "himax-observation-clarity-5": "仅表示所选时间与筛选条件内，已接入日志没有匹配记录，不代表这些页面从未被抓取。",
++  "himax-observation-clarity-6": "先检查页面可访问性、robots、站点地图与内链；技术正常的页面继续观察，并根据真实客户问题补充有依据的内容。",
++  "himax-observation-clarity-7": "日志可能未覆盖完整日期范围；爬虫名称匹配不等于已验证身份，抓取也不等于索引或 AI 引用。",
++  "himax-observation-clarity-8": "请求路径可包含 robots.txt、sitemap.xml 等资源；未观测清单仅统计已导入目录页，两者分母不同。"
+ }
