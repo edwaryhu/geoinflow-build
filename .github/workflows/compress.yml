@@ -1,0 +1,62 @@
+name: Recompress verified public runtime without changing contents
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: geoinflow-runtime-compression
+  cancel-in-progress: false
+jobs:
+  compress:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: build-6ba7c79d8d26-41787092963-1
+      ORIGINAL_SHA256: e0320740792ecb4796bfc25c8ae724ec48fa27c1001753b31770b6b6a5cb8aec
+    steps:
+      - name: Verify input and recompress the unchanged tar stream
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir input output
+          curl --fail --silent --show-error --location --retry 3 --max-time 600 \
+            "https://github.com/edwaryhu/geoinflow-build/releases/download/$RELEASE_TAG/app-rootfs.tar.gz" \
+            -o input/app-rootfs.tar.gz
+          printf '%s  %s\n' "$ORIGINAL_SHA256" input/app-rootfs.tar.gz | sha256sum --check
+          test "$(stat -c%s input/app-rootfs.tar.gz)" = 560615884
+          gzip --decompress --stdout input/app-rootfs.tar.gz | sha256sum | cut -d' ' -f1 > input/original-tar.sha256
+          gzip --decompress --stdout input/app-rootfs.tar.gz | xz --threads=2 -6 --stdout > output/app-rootfs.tar.xz
+          xz --test output/app-rootfs.tar.xz
+          xz --decompress --stdout output/app-rootfs.tar.xz | sha256sum | cut -d' ' -f1 > input/recompressed-tar.sha256
+          cmp input/original-tar.sha256 input/recompressed-tar.sha256
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          archive=Path('output/app-rootfs.tar.xz')
+          digest=hashlib.file_digest(archive.open('rb'),'sha256').hexdigest()
+          size=archive.stat().st_size
+          assert 0<size<2147483648
+          original=Path('input/app-rootfs.tar.gz').stat().st_size
+          result={'source_commit':'6ba7c79d8d263ff620911fdccd90dd90be85dfb7',
+                  'source_release':os.environ['RELEASE_TAG'],
+                  'original_file':'app-rootfs.tar.gz','original_gzip_sha256':os.environ['ORIGINAL_SHA256'],
+                  'original_gzip_bytes':original,'file':archive.name,'compressed_sha256':digest,
+                  'compressed_bytes':size,'uncompressed_tar_sha256':Path('input/original-tar.sha256').read_text().strip(),
+                  'uncompressed_tar_identical':True,'compression':'xz -T2 -6',
+                  'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+                  'workflow_commit':os.environ['GITHUB_SHA'],'private_data_or_credentials_included':False}
+          Path('output/app-rootfs-xz-manifest.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result))
+          PY
+      - name: Publish new nonempty release assets without overwrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s output/app-rootfs.tar.xz
+          test -s output/app-rootfs-xz-manifest.json
+          gh release upload "$RELEASE_TAG" output/app-rootfs.tar.xz output/app-rootfs-xz-manifest.json --repo "$GITHUB_REPOSITORY"
