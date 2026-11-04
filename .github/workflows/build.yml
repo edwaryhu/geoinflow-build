@@ -1,0 +1,140 @@
+name: Build pinned GEOInflow runtime
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: geoinflow-pinned-build
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      SOURCE_SHA: 6ba7c79d8d263ff620911fdccd90dd90be85dfb7
+      APP_IMAGE: geoinflow-local:6ba7c79d8d26
+    steps:
+      - name: Fetch public pinned source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir source output
+          git -C source init -q
+          git -C source remote add origin https://github.com/yaojingang/GEOInflow.git
+          git -C source fetch -q --depth=1 origin "$SOURCE_SHA"
+          git -C source checkout -q --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          test -f source/Dockerfile.liekan
+          cp source/LICENSE output/GEOINFLOW-LICENSE
+          printf '%s\n' "$SOURCE_SHA" > output/source-commit.txt
+          free -m
+          df -h .
+      - name: Build official Dockerfile and fetch official supporting images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --progress=plain --file source/Dockerfile.liekan \
+            --build-arg LIEKAN_REVISION="$SOURCE_SHA" --tag "$APP_IMAGE" source
+          docker pull --platform linux/amd64 postgres:16-alpine
+          docker pull --platform linux/amd64 redis:7.4-alpine
+          docker image inspect "$APP_IMAGE" postgres:16-alpine redis:7.4-alpine > output/image-manifest.json
+      - name: Limited-memory synthetic startup probe
+        id: probe
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create geoinflow-probe >/dev/null
+          trap 'docker rm -fv probe-app probe-log probe-analytics probe-db probe-cache >/dev/null 2>&1 || true; docker network rm geoinflow-probe >/dev/null 2>&1 || true' EXIT
+          # These credentials are generated solely for this disposable CI probe.
+          # No company credentials, real domains or visitor data enter this job.
+          password=$(openssl rand -hex 24)
+          secret=$(openssl rand -hex 32)
+          twofactor=$(openssl rand -hex 32)
+          for value in "$password" "$secret" "$twofactor"; do printf "::add-mask::%s\n" "$value"; done
+          printf 'DATABASE_URL=postgresql://probe:%s@probe-db:5432/probe\nAPP_SECRET=%s\nTWO_FACTOR_ENCRYPTION_KEY=%s\nLIEKAN_ANALYTICS_REDIS_URL=redis://probe-cache:6379\nLIEKAN_AI_ENABLED=false\nDISABLE_TELEMETRY=1\nNEXT_TELEMETRY_DISABLED=1\n' "$password" "$secret" "$twofactor" > "$RUNNER_TEMP/probe.env"
+          chmod 600 "$RUNNER_TEMP/probe.env"
+          docker run -d --name probe-db --network geoinflow-probe \
+            --memory=160m --memory-swap=160m --cpus=.30 \
+            -e POSTGRES_USER=probe -e POSTGRES_DB=probe -e POSTGRES_PASSWORD="$password" \
+            postgres:16-alpine postgres -c shared_buffers=16MB -c work_mem=1MB \
+            -c maintenance_work_mem=16MB -c max_connections=20 >/dev/null
+          docker run -d --name probe-cache --network geoinflow-probe \
+            --memory=48m --memory-swap=48m --cpus=.10 \
+            redis:7.4-alpine redis-server --maxmemory 16mb --maxmemory-policy allkeys-lru --save '' --appendonly no >/dev/null
+          ready=0
+          for i in {1..60}; do
+            if docker exec probe-db pg_isready -U probe -d probe >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = 1
+          docker run -d --name probe-app --network geoinflow-probe \
+            --memory=384m --memory-swap=384m --cpus=.75 \
+            -p 127.0.0.1:13002:3000 --env-file "$RUNNER_TEMP/probe.env" \
+            -e NODE_OPTIONS=--max-old-space-size=256 "$APP_IMAGE" \
+            sh -ec 'export PATH=/app/node_modules/.bin:$PATH; node scripts/liekan-schema-check.mjs --migrations-only --allow-pending; node scripts/check-db.js; node scripts/liekan-schema-check.mjs; node scripts/liekan-migrate.mjs; node scripts/liekan-queue-bootstrap.mjs; node scripts/update-tracker.js; exec node server.js' >/dev/null
+          ready=0
+          for i in {1..150}; do
+            docker stats --no-stream --format '{{json .}}' probe-app probe-db probe-cache >> output/startup-stats.jsonl
+            if curl -fsS --max-time 5 http://127.0.0.1:13002/api/heartbeat > output/heartbeat.json; then ready=1; break; fi
+            test "$(docker inspect --format '{{.State.Running}}' probe-app)" = true || break
+            sleep 4
+          done
+          docker logs probe-app > output/startup-app.log 2>&1
+          test "$ready" = 1
+          docker run -d --name probe-log --network geoinflow-probe \
+            --memory=160m --memory-swap=160m --cpus=.25 --env-file "$RUNNER_TEMP/probe.env" \
+            -e NODE_OPTIONS=--max-old-space-size=96 "$APP_IMAGE" node dist/liekan-worker.mjs --pause-crawler-maintenance >/dev/null
+          docker run -d --name probe-analytics --network geoinflow-probe \
+            --memory=192m --memory-swap=192m --cpus=.50 --env-file "$RUNNER_TEMP/probe.env" \
+            -e NODE_OPTIONS=--max-old-space-size=128 "$APP_IMAGE" node dist/liekan-analytics-worker.mjs >/dev/null
+          for i in {1..12}; do
+            curl -fsS --max-time 15 http://127.0.0.1:13002/login -o /dev/null
+            curl -fsS --max-time 5 http://127.0.0.1:13002/api/heartbeat -o /dev/null
+            docker stats --no-stream --format '{{json .}}' probe-app probe-db probe-cache probe-log probe-analytics >> output/steady-stats.jsonl
+            sleep 5
+          done
+          for name in app db cache log analytics; do
+            docker inspect --format '{{json .State}}' "probe-$name" > "output/state-$name.json"
+            test "$(docker inspect --format '{{.State.Running}}' "probe-$name")" = true
+            test "$(docker inspect --format '{{.State.OOMKilled}}' "probe-$name")" = false
+          done
+          docker exec probe-log node -e "const fs=require('fs');process.exit(Date.now()-fs.statSync('/tmp/liekan-worker-heartbeat').mtimeMs<120000?0:1)"
+          docker exec probe-analytics node -e "const fs=require('fs');process.exit(Date.now()-fs.statSync('/tmp/liekan-analytics-worker-heartbeat').mtimeMs<120000?0:1)"
+          printf '%s\n' 'startup_and_short_idle_probe_passed; not a traffic or production capacity guarantee' > output/runtime-probe.txt
+      - name: Export clean never-started image root filesystems
+        shell: bash
+        env:
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$PROBE_OUTCOME" > output/probe-step-outcome.txt
+          for pair in "app=$APP_IMAGE" 'postgres=postgres:16-alpine' 'redis=redis:7.4-alpine'; do
+            name=${pair%%=*}
+            image=${pair#*=}
+            container=$(docker create "$image")
+            docker export "$container" | gzip -1 > "output/$name-rootfs.tar.gz"
+            docker rm -v "$container" >/dev/null
+            gzip -dc "output/$name-rootfs.tar.gz" | wc -c > "output/$name-rootfs-uncompressed-bytes.txt"
+            if [ "$(stat -c%s "output/$name-rootfs.tar.gz")" -ge 2147483648 ]; then
+              split -b 1900m -d "output/$name-rootfs.tar.gz" "output/$name-rootfs.tar.gz.part-"
+              rm "output/$name-rootfs.tar.gz"
+            fi
+          done
+          # No raw environment files, DB volumes, runtime-created files or credentials are exported.
+          # All rootfs images are exported from never-started containers, not probe containers.
+          cd output
+          sha256sum * > SHA256SUMS
+      - name: Publish experimental build as Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="build-${SOURCE_SHA:0:12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'Experimental rebuild of public GEOInflow commit `%s`. Built with the upstream Dockerfile.liekan. This is not an official upstream release.\n\nRuntime probe outcome: %s. Probe only checks startup and short idle health, not production capacity. No real visitor data or deployment credentials are included.\n\nSee image-manifest.json and SHA256SUMS for immutable image IDs and asset checksums. Alpine rootfs archives retain their Linux/musl environment and licenses. Deployment requires a reviewed isolated runtime and independent production validation.\n' "$SOURCE_SHA" "$(cat output/probe-step-outcome.txt)" > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$tag" output/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --prerelease --title "Experimental GEOInflow ${SOURCE_SHA:0:12}" --notes-file "$RUNNER_TEMP/release-notes.md"
