@@ -39,7 +39,7 @@
     },
     {
       "path": "patches/official-search-ai.patch",
-      "sha256": "822b55f975763b73c288ed987b65d6fecb6ad85a6525c5722fb072a4cb28c81c"
+      "sha256": "a1b7741f259f36e28bce6b4d1c6671c39eda33be98045411de2798a46567e46b"
     }
   ],
   "test_files": [
