@@ -65,7 +65,7 @@ index 0000000..35b5781
 +});
 diff --git a/src/components/liekan/features/OfficialSearchAi.tsx b/src/components/liekan/features/OfficialSearchAi.tsx
 new file mode 100644
-index 0000000..45b6dac
+index 0000000..818e4e6
 --- /dev/null
 +++ b/src/components/liekan/features/OfficialSearchAi.tsx
 @@ -0,0 +1,74 @@
@@ -132,7 +132,7 @@ index 0000000..45b6dac
 +    </>}
 +  </section>;
 +}
-+function WindowNote({ value, t }: { value: { exportWindow: { start: string; endInclusive: string }; sourceTimezone: string | null; missingSelectedDates: string[] }; t: (zh: string, en: string) => string }) {
++function WindowNote({ value, t }: { value: { exportWindow: { start: string; endInclusive: string }; sourceTimezone?: string | null; missingSelectedDates: string[] }; t: (zh: string, en: string) => string }) {
 +  return <p className="text-[12px] text-sub">{t('CSV 实际日期', 'Actual CSV dates')}：{value.exportWindow.start} – {value.exportWindow.endInclusive} · {t('来源时区', 'Source timezone')}：{value.sourceTimezone ?? t('未知（保留原始日期）', 'Unknown (original dates retained)')}
 +    {value.missingSelectedDates.length > 0 && <><br />{t('所选窗口缺失日期', 'Missing dates in selected window')}：{value.missingSelectedDates.join(', ')}（{t('未知，非 0', 'unknown, not zero')}）</>}</p>;
 +}
