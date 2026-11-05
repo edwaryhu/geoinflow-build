@@ -1,0 +1,386 @@
+diff --git a/src/components/liekan/LiekanPage.tsx b/src/components/liekan/LiekanPage.tsx
+index 21d05fd..5f1c4bd 100644
+--- a/src/components/liekan/LiekanPage.tsx
++++ b/src/components/liekan/LiekanPage.tsx
+@@ -63,6 +63,7 @@ import { ManagementDrawer } from './ManagementDrawer';
+ import { CrawlerDialog } from './features/CrawlerDialog';
+ import { GeoWeightPlaceholder, GeoWeightSummary } from './features/GeoWeightSummary';
+ import { VercelHistory } from './features/VercelHistory';
++import { OfficialSearchAi } from './features/OfficialSearchAi';
+ import { ReportContext } from './ReportContext';
+ import type { LiekanReport, Resource } from './types';
+ import {
+@@ -440,7 +441,10 @@ export function LiekanPage({ resource }: { resource: Resource }) {
+     !restricted &&
+     userId &&
+     websiteMatchesHandle(website, websiteId) ? (
+-      <VercelHistory key={`${userId}:${website.id}`} userId={userId} websiteId={website.id} />
++      <>
++        <VercelHistory key={`history:${userId}:${website.id}`} userId={userId} websiteId={website.id} />
++        <OfficialSearchAi key={`official:${userId}:${website.id}`} userId={userId} websiteId={website.id} />
++      </>
+     ) : undefined;
+   const refresh = () => {
+     if (reading)
+diff --git a/src/app/api/liekan/websites/[websiteId]/official-search-ai/route.ts b/src/app/api/liekan/websites/[websiteId]/official-search-ai/route.ts
+new file mode 100644
+index 0000000..d262878
+--- /dev/null
++++ b/src/app/api/liekan/websites/[websiteId]/official-search-ai/route.ts
+@@ -0,0 +1,10 @@
++import { api } from '@/lib/liekan/http';
++import { authorize } from '@/lib/liekan/upstream/server';
++import { readOfficialSearchAi } from '@/lib/liekan/upstream/official-search-ai';
++export async function GET(request: Request, { params }: { params: Promise<{ websiteId: string }> }) {
++  return api(async () => {
++    const { websiteId } = await params;
++    const { website } = await authorize(request, websiteId);
++    return readOfficialSearchAi(website.id);
++  });
++}
+diff --git a/src/app/api/liekan/websites/[websiteId]/official-search-ai/route.test.ts b/src/app/api/liekan/websites/[websiteId]/official-search-ai/route.test.ts
+new file mode 100644
+index 0000000..35b5781
+--- /dev/null
++++ b/src/app/api/liekan/websites/[websiteId]/official-search-ai/route.test.ts
+@@ -0,0 +1,19 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++const mocks = vi.hoisted(() => ({ authorize: vi.fn(), read: vi.fn() }));
++vi.mock('@/lib/liekan/http', () => ({ api: (f: () => Promise<unknown>) => f() }));
++vi.mock('@/lib/liekan/upstream/server', () => ({ authorize: mocks.authorize }));
++vi.mock('@/lib/liekan/upstream/official-search-ai', () => ({ readOfficialSearchAi: mocks.read }));
++import { GET } from './route';
++beforeEach(() => vi.resetAllMocks());
++describe('official report read authorization', () => {
++  it('never loads a snapshot after denied access', async () => {
++    mocks.authorize.mockRejectedValue(new Error('denied'));
++    await expect(GET(new Request('https://example.invalid/'), { params: Promise.resolve({ websiteId: '101' }) })).rejects.toThrow('denied');
++    expect(mocks.read).not.toHaveBeenCalled();
++  });
++  it('uses the existing authorization-resolved UUID', async () => {
++    mocks.authorize.mockResolvedValue({ website: { id: '11111111-1111-4111-8111-111111111111' } });
++    await GET(new Request('https://example.invalid/'), { params: Promise.resolve({ websiteId: '101' }) });
++    expect(mocks.read).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
++  });
++});
+diff --git a/src/components/liekan/features/OfficialSearchAi.tsx b/src/components/liekan/features/OfficialSearchAi.tsx
+new file mode 100644
+index 0000000..45b6dac
+--- /dev/null
++++ b/src/components/liekan/features/OfficialSearchAi.tsx
+@@ -0,0 +1,74 @@
++'use client';
++import { useApi } from '@/components/hooks/useApi';
++import { featureApi } from '@/lib/liekan/upstream/features-client';
++import { useLiekanI18n } from '@/lib/liekan/i18n/client';
++import type { OfficialSearchAiResponse } from '@/lib/liekan/contracts/official-search-ai';
++export function OfficialSearchAi({ userId, websiteId }: { userId: string; websiteId: string }) {
++  const api = useApi();
++  const query = api.useQuery<OfficialSearchAiResponse>({
++    queryKey: ['liekan-feature', userId, 'official-search-ai', websiteId],
++    queryFn: ({ signal }) => featureApi.get(`/liekan/websites/${websiteId}/official-search-ai`, {}, signal),
++    enabled: !!userId && !!websiteId, staleTime: 300000, retry: false, placeholderData: undefined,
++  });
++  const mismatch = query.data?.state === 'available' && query.data.snapshot.websiteId !== websiteId;
++  return <OfficialSearchAiCard response={userId && websiteId && !mismatch ? query.data : undefined} failed={!!query.error || mismatch} onRefresh={() => void query.refetch()} />;
++}
++export function OfficialSearchAiCard({ response, failed = false, onRefresh }: { response?: OfficialSearchAiResponse; failed?: boolean; onRefresh?: () => void }) {
++  const { locale } = useLiekanI18n();
++  const t = (zh: string, en: string) => locale === 'en-US' ? en : zh;
++  if (!response && !failed) return null;
++  const s = !failed && response?.state === 'available' ? response.snapshot : null;
++  return <section className="card p-5 space-y-4" aria-label={t('官方搜索与 AI 引用', 'Official search and AI citations')}>
++    <header className="flex items-start justify-between gap-3"><div><h2 className="text-[14px] font-bold">{t('官方搜索与 AI 引用', 'Official search and AI citations')}</h2>
++      <p className="text-[12px] text-sub mt-1">{t('独立官方快照 · 非实时 · 不随上方日期筛选变化', 'Separate official snapshot · not live · independent of the date filter above')}</p></div>{onRefresh && <button type="button" className="px-3 py-1.5 rounded-md border border-line text-[12px]" onClick={onRefresh}>{t('刷新快照', 'Refresh snapshot')}</button>}</header>
++    {!s ? <p className="text-[12px] text-sub">{response?.state === 'not_connected' && !failed ? t('尚未导入官方快照，指标未按 0 处理。', 'No official snapshot imported. Missing metrics are not zero.') : t('官方快照读取失败，未显示旧值或按 0 处理。', 'Official snapshot unavailable. Stale values are hidden; missing metrics are not zero.')}</p> : <>
++      <p className="text-[12px] text-sub">{s.hostname} · {t('官方页面所选范围', 'Selected provider range')}：{s.selectedWindow.start} – {s.selectedWindow.endInclusive}<br />
++        {t('官方导出日期', 'Official export date')}：{s.exportDate} · {t('整理时间', 'Prepared at')}：{s.preparedAt} · {t('官方页面读取时间', 'Provider observed at')}：{s.observedAt ?? t('未记录', 'Not recorded')}</p>
++      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
++        <div className="rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing Search Performance</h3>
++          {s.bingSearch.state !== 'available' ? <p>{s.bingSearch.reason}</p> : <>
++            <p className="text-[18px] font-bold">{s.bingSearch.clicks} {t('点击', 'clicks')} · {s.bingSearch.impressions} {t('展示', 'impressions')} · CTR {s.bingSearch.ctrDisplay}</p>
++            <WindowNote value={s.bingSearch} t={t} />
++            <p className="text-[12px] text-sub">{t('总览来源：All。关键词、页面、地区、设备仅 Web，不含 Chat；各视图分母独立，明细不强行与总览相加对齐。', 'Overview: All. Query, page, country and device views: Web only, excluding Chat. Each view keeps its own denominator.')}</p>
++            <Rows title={t('每日搜索数据（All）', 'Daily search (All)')} value={s.bingSearch.daily} />
++            <Rows title={t('页面（Web）', 'Pages (Web)')} value={s.bingSearch.pages} />
++            <Rows title={t('关键词（Web）', 'Queries (Web)')} value={s.bingSearch.queries} />
++            <Rows title={t('地区（Web；保留官方代码）', 'Countries (Web; provider codes)')} value={s.bingSearch.countries} />
++            <Rows title={t('设备（Web）', 'Devices (Web)')} value={s.bingSearch.devices} />
++          </>}
++        </div>
++        <div className="rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing AI Performance</h3>
++          {s.bingAi.state !== 'available' ? <p>{s.bingAi.reason}</p> : <>
++            <p className="text-[18px] font-bold">{s.bingAi.citations} {t('次官方引用', 'official citations')}</p>
++            <WindowNote value={s.bingAi} t={t} />
++            <p className="text-[12px] text-sub">{t('官方界面“平均被引用页面”显示', 'Provider average cited pages display')}：{s.bingAi.averageCitedPagesDisplay}。{t('保留原显示精度，不自行重算。', 'Display precision retained; not recalculated.')}</p>
++            <p className="text-[12px] text-sub">{t('覆盖 Copilot、Bing AI 及支持的伙伴体验；不是 ChatGPT 排名、抓取次数、访问或询盘。Grounding query 是归纳检索词，分享比例按官方原值保留，分母未知。', 'Covers Copilot, Bing AI and supported partner experiences. These are not ChatGPT rankings, crawls, visits or leads. Grounding queries are grouped phrases; citation share is retained as reported with an unknown denominator.')}</p>
++            {s.bingAi.allPositiveDatesBeforeProjectStart && <p className="text-[12px] text-sub">{t('本快照的所有非零引用日期早于本轮 GEO 项目开始，作为既有表现，不认定为本轮优化效果。', 'All positive citation dates in this snapshot predate this GEO project. They show existing visibility, not effects of these changes.')}</p>}
++            <Rows title={t('每日 AI 引用', 'Daily AI citations')} value={s.bingAi.daily} />
++            <Rows title={t('被引用页面', 'Cited pages')} value={s.bingAi.pages} />
++            <Rows title={t('Grounding queries 与官方 Citation Share', 'Grounding queries and reported Citation Share')} value={s.bingAi.groundingQueries} />
++          </>}
++        </div>
++      </div>
++      <div className="text-[12px] text-sub space-y-1"><h3 className="font-bold">Google Search Console</h3>
++        <p>{s.gsc.ownership === 'verified' ? t('属性所有权已验证。', 'Property ownership verified.') : t('属性所有权尚未确认。', 'Property ownership not confirmed.')}
++          {s.gsc.performance === 'processing' ? t('官方表现数据处理中。', 'Performance data is processing.') : t('表现数据尚未接入。', 'Performance metrics are not connected.')}
++          {s.gsc.automaticSync === 'deferred_mfa' ? t('自动 API 同步按用户决定暂缓（Google Cloud 要求 MFA）。', 'Automatic API sync deferred by the owner because Google Cloud requires MFA.') : t('自动同步未接通。', 'Automatic sync is not connected.')}</p>
++        <p>{t('首页已索引', 'Homepage indexed')}：{s.gsc.homepageIndexed === null ? t('未知', 'Unknown') : s.gsc.homepageIndexed ? t('是', 'Yes') : t('否', 'No')} · {t('Sitemap 已发现 URL', 'Sitemap discovered URLs')}：{s.gsc.sitemapDiscoveredUrls ?? '—'} · {t('点击 / 展示 / AI 引用', 'Clicks / impressions / AI citations')}：— / — / —</p>
++        <p>{t('GSC 核查时间', 'GSC checked at')}：{s.gsc.checkedAt ?? t('未记录', 'Not recorded')} · {t('ChatGPT 固定题库实测：尚未采样；引用未知。', 'ChatGPT fixed-question sampling: not run; citations unknown.')}</p>
++      </div>
++      <p className="text-[12px] text-sub">{t('官方导出有处理延迟与抽样限制；缺失日不补 0。所有数据保持独立来源，不并入浏览器 PV/UV、爬虫请求、GEO 权重或转化。', 'Official exports have processing delays and sampling limits. Missing days stay unknown. These data are separate from browser PV/UV, crawler requests, GEO weight and conversions.')}</p>
++    </>}
++  </section>;
++}
++function WindowNote({ value, t }: { value: { exportWindow: { start: string; endInclusive: string }; sourceTimezone: string | null; missingSelectedDates: string[] }; t: (zh: string, en: string) => string }) {
++  return <p className="text-[12px] text-sub">{t('CSV 实际日期', 'Actual CSV dates')}：{value.exportWindow.start} – {value.exportWindow.endInclusive} · {t('来源时区', 'Source timezone')}：{value.sourceTimezone ?? t('未知（保留原始日期）', 'Unknown (original dates retained)')}
++    {value.missingSelectedDates.length > 0 && <><br />{t('所选窗口缺失日期', 'Missing dates in selected window')}：{value.missingSelectedDates.join(', ')}（{t('未知，非 0', 'unknown, not zero')}）</>}</p>;
++}
++function Rows({ title, value }: { title: string; value: { columns: string[]; rows: string[][] } }) {
++  return <details className="text-[12px]"><summary className="cursor-pointer">{title} ({value.rows.length})</summary>
++    <div className="overflow-x-auto max-h-80 overflow-y-auto"><table className="w-full text-left mt-2"><caption className="sr-only">{title}</caption>
++      <thead><tr>{value.columns.map((c, i) => <th key={i} className="p-2 border-b border-line">{c}</th>)}</tr></thead>
++      <tbody>{value.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className="p-2 border-b border-line break-words">{cell}</td>)}</tr>)}</tbody>
++    </table></div></details>;
++}
+diff --git a/src/components/liekan/features/OfficialSearchAi.test.tsx b/src/components/liekan/features/OfficialSearchAi.test.tsx
+new file mode 100644
+index 0000000..4f83b37
+--- /dev/null
++++ b/src/components/liekan/features/OfficialSearchAi.test.tsx
+@@ -0,0 +1,44 @@
++import React from 'react';
++import { renderToStaticMarkup } from 'react-dom/server';
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++const mocks = vi.hoisted(() => ({ locale: 'zh-CN', query: { data: undefined as any, error: null as any }, options: undefined as any, get: vi.fn() }));
++vi.mock('@/components/hooks/useApi', () => ({ useApi: () => ({ useQuery: (opts: unknown) => { mocks.options = opts; return mocks.query; } }) }));
++vi.mock('@/lib/liekan/upstream/features-client', () => ({ featureApi: { get: mocks.get } }));
++vi.mock('@/lib/liekan/i18n/client', () => ({ useLiekanI18n: () => ({ locale: mocks.locale }) }));
++import { OfficialSearchAi, OfficialSearchAiCard } from './OfficialSearchAi';
++import { officialFixture, fixtureWebsite } from '@/lib/liekan/contracts/official-search-ai.fixture';
++beforeEach(() => { mocks.locale = 'zh-CN'; mocks.query = { data: undefined, error: null }; mocks.get.mockClear(); });
++describe('independent official source card', () => {
++  it('shows unknown source as unavailable rather than zero', () => {
++    const html = renderToStaticMarkup(<OfficialSearchAiCard response={{ state: 'not_connected', snapshot: null }} />);
++    expect(html).toContain('尚未导入'); expect(html).not.toContain('0 次');
++  });
++  it('shows all official detail sections and keeps source windows and sampling limits', () => {
++    const html = renderToStaticMarkup(<OfficialSearchAiCard response={{ state: 'available', snapshot: officialFixture() }} />);
++    for (const x of ['7 次官方引用', '3 点击', '8 展示', '关键词（Web）', '地区（Web', '设备（Web）', '每日搜索数据', '每日 AI 引用', '12.34%', '分母未知', '未知（保留原始日期）', '2020-01-04', '— / — / —', '早于本轮 GEO']) expect(html).toContain(x);
++  });
++  it('does not preserve stale values after a failed read', () => {
++    const html = renderToStaticMarkup(<OfficialSearchAiCard response={{ state: 'available', snapshot: officialFixture() }} failed />);
++    expect(html).not.toContain('7 次官方引用'); expect(html).toContain('读取失败');
++  });
++  it('supports English display', () => {
++    mocks.locale = 'en-US'; const html = renderToStaticMarkup(<OfficialSearchAiCard response={{ state: 'available', snapshot: officialFixture() }} />);
++    expect(html).toContain('Official search and AI citations'); expect(html).toContain('Unknown (original dates retained)');
++  });
++  it('renders provider text safely without HTML execution', () => {
++    const s = officialFixture(); if (s.bingAi.state === 'available') s.bingAi.groundingQueries.rows[0][0] = '<img src=x onerror=bad()>';
++    const html = renderToStaticMarkup(<OfficialSearchAiCard response={{ state: 'available', snapshot: s }} />);
++    expect(html).toContain('&lt;img'); expect(html).not.toContain('<img src=x');
++  });
++  it('scopes cache and request to the current identity', async () => {
++    renderToStaticMarkup(<OfficialSearchAi userId="synthetic-user" websiteId={fixtureWebsite} />);
++    expect(mocks.options.queryKey).toEqual(['liekan-feature', 'synthetic-user', 'official-search-ai', fixtureWebsite]);
++    const signal = new AbortController().signal; await mocks.options.queryFn({ signal });
++    expect(mocks.get).toHaveBeenCalledWith(`/liekan/websites/${fixtureWebsite}/official-search-ai`, {}, signal);
++  });
++  it('hides mismatched website values', () => {
++    mocks.query.data = { state: 'available', snapshot: officialFixture() };
++    const html = renderToStaticMarkup(<OfficialSearchAi userId="synthetic-user" websiteId="22222222-2222-4222-8222-222222222222" />);
++    expect(html).not.toContain('7 次官方引用'); expect(html).toContain('读取失败');
++  });
++});
+diff --git a/src/lib/liekan/contracts/official-search-ai.ts b/src/lib/liekan/contracts/official-search-ai.ts
+new file mode 100644
+index 0000000..cd2cee3
+--- /dev/null
++++ b/src/lib/liekan/contracts/official-search-ai.ts
+@@ -0,0 +1,55 @@
++import { z } from 'zod';
++const count = z.number().int().nonnegative().safe();
++const date = z.string().date();
++const instant = z.string().datetime({ offset: true });
++const windowSchema = z.object({ start: date, endInclusive: date }).strict()
++  .refine(w => w.start <= w.endInclusive, 'Invalid date window');
++const table = z.object({
++  columns: z.array(z.string().max(100)).min(1).max(8),
++  rows: z.array(z.array(z.string().max(2048)).max(8)).max(1000),
++}).strict().refine(t => t.rows.every(row => row.length === t.columns.length), 'Table shape mismatch');
++const availableSearch = z.object({
++  state: z.literal('available'), exportWindow: windowSchema, sourceTimezone: z.string().max(80).nullable(),
++  missingSelectedDates: z.array(date).max(366), clicks: count, impressions: count,
++  ctrDisplay: z.string().max(40), totalScope: z.literal('All'), dimensionScope: z.literal('Web'),
++  daily: table, pages: table, queries: table, countries: table, devices: table,
++}).strict();
++const availableAi = z.object({
++  state: z.literal('available'), exportWindow: windowSchema, sourceTimezone: z.string().max(80).nullable(),
++  missingSelectedDates: z.array(date).max(366), citations: count,
++  averageCitedPagesDisplay: z.string().max(40), citationShareDenominator: z.null(),
++  daily: table, pages: table, groundingQueries: table,
++  allPositiveDatesBeforeProjectStart: z.boolean(),
++}).strict();
++const unavailable = z.object({ state: z.enum(['not_connected', 'processing', 'unavailable']), reason: z.string().max(400) }).strict();
++export const officialSearchAiSchema = z.object({
++  version: z.literal(1), websiteId: z.uuid(), hostname: z.enum(['himaxtec.com', 'www.himaxtec.com']),
++  provider: z.literal('Official webmaster reports'),
++  preparedAt: instant, observedAt: instant.nullable(), exportDate: date, refreshMode: z.literal('manual_official_snapshot'),
++  selectedWindow: windowSchema,
++  evidence: z.array(z.object({ file: z.string().regex(/^[A-Za-z0-9_.-]{1,160}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).min(1).max(20),
++  bingSearch: z.union([availableSearch, unavailable]), bingAi: z.union([availableAi, unavailable]),
++  gsc: z.object({
++    ownership: z.enum(['verified', 'not_verified', 'unknown']),
++    performance: z.enum(['processing', 'not_connected', 'unavailable']),
++    automaticSync: z.enum(['deferred_mfa', 'not_connected', 'awaiting_authorization']),
++    homepageIndexed: z.boolean().nullable(), sitemapDiscoveredUrls: count.nullable(), checkedAt: instant.nullable(),
++    clicks: z.null(), impressions: z.null(), citations: z.null(),
++  }).strict(),
++  chatgpt: z.object({ state: z.literal('not_sampled'), citations: z.null() }).strict(),
++}).strict().superRefine((s, ctx) => {
++  const end = s.selectedWindow.endInclusive;
++  for (const v of [s.bingSearch, s.bingAi]) {
++    if (v.state !== 'available') continue;
++    if (v.exportWindow.start < s.selectedWindow.start || v.exportWindow.endInclusive > end)
++      ctx.addIssue({ code: 'custom', message: 'Export window outside selected dates' });
++    if (new Set(v.missingSelectedDates).size !== v.missingSelectedDates.length ||
++        v.missingSelectedDates.some(d => d < s.selectedWindow.start || d > end))
++      ctx.addIssue({ code: 'custom', message: 'Invalid missing selected dates' });
++  }
++  if (s.observedAt && Date.parse(s.observedAt) > Date.parse(s.preparedAt))
++    ctx.addIssue({ code: 'custom', message: 'Observation after preparation' });
++});
++export type OfficialSearchAiSnapshot = z.infer<typeof officialSearchAiSchema>;
++export type OfficialSearchAiResponse = { state: 'available'; snapshot: OfficialSearchAiSnapshot }
++  | { state: 'not_connected' | 'unavailable'; snapshot: null };
+diff --git a/src/lib/liekan/contracts/official-search-ai.fixture.ts b/src/lib/liekan/contracts/official-search-ai.fixture.ts
+new file mode 100644
+index 0000000..80f7f08
+--- /dev/null
++++ b/src/lib/liekan/contracts/official-search-ai.fixture.ts
+@@ -0,0 +1,21 @@
++import type { OfficialSearchAiSnapshot } from './official-search-ai';
++// Entirely synthetic fixture. Never copy real official exports into public source/tests.
++export const fixtureWebsite = '11111111-1111-4111-8111-111111111111';
++export function officialFixture(): OfficialSearchAiSnapshot {
++  const table = { columns: ['Label', 'Value'], rows: [['synthetic', '3']] };
++  const window = { start: '2020-01-01', endInclusive: '2020-01-03' };
++  return {
++    version: 1, websiteId: fixtureWebsite, hostname: 'himaxtec.com', provider: 'Official webmaster reports',
++    exportDate: '2020-01-06', preparedAt: '2020-01-06T12:00:00+08:00', observedAt: '2020-01-06T11:00:00+08:00',
++    refreshMode: 'manual_official_snapshot', selectedWindow: { start: '2020-01-01', endInclusive: '2020-01-05' },
++    evidence: [{ file: 'synthetic.csv', sha256: 'a'.repeat(64) }],
++    bingSearch: { state: 'available', exportWindow: window, sourceTimezone: null, missingSelectedDates: ['2020-01-04', '2020-01-05'],
++      clicks: 3, impressions: 8, ctrDisplay: '37.5%', totalScope: 'All', dimensionScope: 'Web', daily: table, queries: table, pages: table, countries: table, devices: table },
++    bingAi: { state: 'available', exportWindow: window, sourceTimezone: null, missingSelectedDates: ['2020-01-04', '2020-01-05'],
++      citations: 7, averageCitedPagesDisplay: '0', citationShareDenominator: null, daily: table, pages: table,
++      groundingQueries: { columns: ['Grounding Query', 'Citations', 'Citation Share'], rows: [['synthetic query', '2', '12.34%']] }, allPositiveDatesBeforeProjectStart: true },
++    gsc: { ownership: 'verified', performance: 'processing', automaticSync: 'awaiting_authorization', homepageIndexed: true, sitemapDiscoveredUrls: 2,
++      checkedAt: '2020-01-06T11:00:00+08:00', clicks: null, impressions: null, citations: null },
++    chatgpt: { state: 'not_sampled', citations: null },
++  };
++}
+diff --git a/src/lib/liekan/contracts/official-search-ai.test.ts b/src/lib/liekan/contracts/official-search-ai.test.ts
+new file mode 100644
+index 0000000..b2fa0ee
+--- /dev/null
++++ b/src/lib/liekan/contracts/official-search-ai.test.ts
+@@ -0,0 +1,36 @@
++import { describe, expect, it } from 'vitest';
++import { officialSearchAiSchema } from './official-search-ai';
++import { officialFixture } from './official-search-ai.fixture';
++describe('official snapshots remain separate evidence', () => {
++  it('retains unknown timezone, missing days and reported share without reconciliation', () => {
++    const s = officialSearchAiSchema.parse(officialFixture());
++    expect(s.bingAi.state === 'available' && s.bingAi.averageCitedPagesDisplay).toBe('0');
++    expect(s.bingAi.state === 'available' && s.bingAi.citationShareDenominator).toBeNull();
++    expect(s.bingSearch.state === 'available' && s.bingSearch.sourceTimezone).toBeNull();
++    expect(s.gsc.clicks).toBeNull(); expect(s.chatgpt.citations).toBeNull();
++  });
++  it.each([{ websiteId: '../escape' }, { hostname: 'other.example' }, { provider: 'Crawler logs' }, { privateToken: 'synthetic' },
++    { refreshMode: 'live' }, { observedAt: '2099-01-01T00:00:00Z' }])('rejects wrong scope or misleading metadata %j', bad => {
++    expect(officialSearchAiSchema.safeParse({ ...officialFixture(), ...bad }).success).toBe(false);
++  });
++  it('rejects invented GSC metrics', () => {
++    const s = officialFixture(); (s.gsc as unknown as Record<string, unknown>).clicks = 0;
++    expect(officialSearchAiSchema.safeParse(s).success).toBe(false);
++  });
++  it('rejects fabricated AI share denominator', () => {
++    const s = officialFixture(); if (s.bingAi.state === 'available') (s.bingAi as unknown as Record<string, unknown>).citationShareDenominator = 999;
++    expect(officialSearchAiSchema.safeParse(s).success).toBe(false);
++  });
++  it('rejects broken table shapes', () => {
++    const s = officialFixture(); if (s.bingSearch.state === 'available') s.bingSearch.pages = { columns: ['x'], rows: [['a', 'b']] };
++    expect(officialSearchAiSchema.safeParse(s).success).toBe(false);
++  });
++  it('rejects out-of-window date claims', () => {
++    const s = officialFixture(); if (s.bingAi.state === 'available') s.bingAi.exportWindow.endInclusive = '2020-02-01';
++    expect(officialSearchAiSchema.safeParse(s).success).toBe(false);
++  });
++  it('keeps unavailable sources without zero-filled data', () => {
++    const s = officialFixture(); s.bingAi = { state: 'not_connected', reason: 'No official export yet' };
++    expect(officialSearchAiSchema.parse(s).bingAi).toEqual(s.bingAi);
++  });
++});
+diff --git a/src/lib/liekan/upstream/official-search-ai.ts b/src/lib/liekan/upstream/official-search-ai.ts
+new file mode 100644
+index 0000000..a78e0fe
+--- /dev/null
++++ b/src/lib/liekan/upstream/official-search-ai.ts
+@@ -0,0 +1,24 @@
++import { constants } from 'node:fs';
++import { open } from 'node:fs/promises';
++import path from 'node:path';
++import { z } from 'zod';
++import { officialSearchAiSchema, type OfficialSearchAiResponse } from '../contracts/official-search-ai';
++const LIMIT = 512 * 1024;
++export async function readOfficialSearchAi(websiteId: string): Promise<OfficialSearchAiResponse> {
++  if (!z.uuid().safeParse(websiteId).success) return { state: 'unavailable', snapshot: null };
++  let file: Awaited<ReturnType<typeof open>> | undefined;
++  try {
++    file = await open(path.join(process.cwd(), 'managed-geo', `official-search-ai-${websiteId}.json`), constants.O_RDONLY | constants.O_NOFOLLOW);
++    const stat = await file.stat();
++    if (!stat.isFile() || stat.size > LIMIT) throw new Error('Invalid official snapshot file');
++    const buffer = Buffer.alloc(LIMIT + 1);
++    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
++    if (bytesRead > LIMIT) throw new Error('Official snapshot exceeds limit');
++    const snapshot = officialSearchAiSchema.parse(JSON.parse(buffer.subarray(0, bytesRead).toString('utf8')));
++    if (snapshot.websiteId !== websiteId || Date.parse(snapshot.preparedAt) > Date.now() + 60000)
++      throw new Error('Official snapshot identity/date mismatch');
++    return { state: 'available', snapshot };
++  } catch (error) {
++    return { state: (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'not_connected' : 'unavailable', snapshot: null };
++  } finally { await file?.close(); }
++}
+diff --git a/src/lib/liekan/upstream/official-search-ai.test.ts b/src/lib/liekan/upstream/official-search-ai.test.ts
+new file mode 100644
+index 0000000..e5a6fb1
+--- /dev/null
++++ b/src/lib/liekan/upstream/official-search-ai.test.ts
+@@ -0,0 +1,25 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest';
++const { openMock } = vi.hoisted(() => ({ openMock: vi.fn() }));
++vi.mock('node:fs/promises', () => ({ open: openMock }));
++import { readOfficialSearchAi } from './official-search-ai';
++import { officialFixture, fixtureWebsite } from '../contracts/official-search-ai.fixture';
++beforeEach(() => vi.clearAllMocks());
++function file(data: unknown, size?: number) {
++  const b = Buffer.from(JSON.stringify(data)); const close = vi.fn();
++  openMock.mockResolvedValue({ stat: async () => ({ isFile: () => true, size: size ?? b.length }),
++    read: async (buffer: Buffer) => { b.copy(buffer); return { bytesRead: b.length }; }, close });
++  return close;
++}
++describe('official snapshot private file boundary', () => {
++  it('reads authorized UUID from the fixed directory and closes', async () => {
++    const close = file(officialFixture()); expect((await readOfficialSearchAi(fixtureWebsite)).state).toBe('available');
++    expect(openMock.mock.calls[0][0]).toContain(`/managed-geo/official-search-ai-${fixtureWebsite}.json`);
++    expect(close).toHaveBeenCalledOnce();
++  });
++  it('does not open path traversal input', async () => { expect((await readOfficialSearchAi('../x')).state).toBe('unavailable'); expect(openMock).not.toHaveBeenCalled(); });
++  it('missing file remains not connected', async () => { openMock.mockRejectedValue({ code: 'ENOENT' }); expect(await readOfficialSearchAi(fixtureWebsite)).toEqual({ state: 'not_connected', snapshot: null }); });
++  it('rejects another website snapshot', async () => { file({ ...officialFixture(), websiteId: '22222222-2222-4222-8222-222222222222' }); expect((await readOfficialSearchAi(fixtureWebsite)).snapshot).toBeNull(); });
++  it('refuses oversized files', async () => { const close = file(officialFixture(), 524289); expect((await readOfficialSearchAi(fixtureWebsite)).state).toBe('unavailable'); expect(close).toHaveBeenCalledOnce(); });
++  it('refuses symlinks', async () => { openMock.mockRejectedValue({ code: 'ELOOP' }); expect((await readOfficialSearchAi(fixtureWebsite)).state).toBe('unavailable'); });
++  it('refuses future prepared times', async () => { file({ ...officialFixture(), preparedAt: '2099-01-01T00:00:00Z' }); expect((await readOfficialSearchAi(fixtureWebsite)).state).toBe('unavailable'); });
++});

@@ -36,6 +36,10 @@
     {
       "path": "patches/identity-weight-compare.patch",
       "sha256": "17f793e6cf88acff044aa270253f192975dfc294fc82851879170a77b7f92337"
+    },
+    {
+      "path": "patches/official-search-ai.patch",
+      "sha256": "822b55f975763b73c288ed987b65d6fecb6ad85a6525c5722fb072a4cb28c81c"
     }
   ],
   "test_files": [
@@ -60,9 +64,13 @@
     "src/components/liekan/crawler-catalog.test.tsx",
     "src/components/liekan/crawler-pages-filter.test.tsx",
     "src/components/liekan/features/analytics-pages.test.tsx",
-    "src/components/liekan/features/geo-weight.test.tsx"
+    "src/components/liekan/features/geo-weight.test.tsx",
+    "src/lib/liekan/contracts/official-search-ai.test.ts",
+    "src/lib/liekan/upstream/official-search-ai.test.ts",
+    "src/app/api/liekan/websites/[websiteId]/official-search-ai/route.test.ts",
+    "src/components/liekan/features/OfficialSearchAi.test.tsx"
   ],
-  "minimum_passed_tests": 335,
+  "minimum_passed_tests": 363,
   "required_skipped_tests": 0,
   "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots.",
   "integration_tests": {
