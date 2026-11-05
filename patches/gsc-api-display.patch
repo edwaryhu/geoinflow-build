@@ -1,0 +1,328 @@
+diff --git a/src/components/liekan/features/GscApiEvidence.test.tsx b/src/components/liekan/features/GscApiEvidence.test.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/components/liekan/features/GscApiEvidence.test.tsx
+@@ -0,0 +1,18 @@
++import React from 'react';
++import {renderToStaticMarkup} from 'react-dom/server';
++import {describe,it,expect,vi,afterEach} from 'vitest';
++vi.mock('@/lib/liekan/i18n/client',()=>({useLiekanI18n:()=>({locale:'zh-CN'})}));
++import {GscApiEvidence} from './GscApiEvidence';
++import {gscFixture} from '@/lib/liekan/contracts/gsc-api-evidence.fixture';
++afterEach(()=>vi.restoreAllMocks());
++describe('GSC actual API observations',()=>{
++ it('does not label no_rows as zero or assert processing',()=>{const s=renderToStaticMarkup(<GscApiEvidence evidence={gscFixture()}/>);for(const v of ['指标未知','— / — / — / —','America/Los_Angeles (PT)','siteRestrictedUser','定时采集尚未配置'])expect(s).toContain(v);expect(s).not.toContain('官方表现数据处理中。')});
++ it('keeps missing overview when daily observations exist',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.days={...e.reports.days,status:'observed',row_count:1,rows:[{date:'2020-01-01',clicks:0,impressions:2,ctr:0,position:3}]};const s=renderToStaticMarkup(<GscApiEvidence evidence={e}/>);expect(s).toContain('总览未返回');expect(s).toContain('— / — / — / —');expect(s).toContain('2020-01-01')});
++ it('shows source total only when actually returned',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.total={...e.reports.total,status:'observed',row_count:1,rows:[{clicks:0,impressions:8,ctr:0,position:5}]};const s=renderToStaticMarkup(<GscApiEvidence evidence={e}/>);expect(s).toContain('0 / 8 / 0% / 5')});
++ it('shows page and paired country/device evidence without merging denominators',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.pages={...e.reports.pages,status:'observed',row_count:1,rows:[{page:'https://www.himaxtec.com/en/about',page_language_group:'en',clicks:1,impressions:4,ctr:0.25,position:2}]};e.reports.countries_devices={...e.reports.countries_devices,status:'observed',row_count:1,rows:[{country:'usa',device:'MOBILE',clicks:1,impressions:5,ctr:0.2,position:2}]};const s=renderToStaticMarkup(<GscApiEvidence evidence={e}/>);for(const v of ['https://www.himaxtec.com/en/about','页面语言','usa','MOBILE','0.25','0.2','各聚合独立'])expect(s).toContain(v);expect(s).toContain('— / — / — / —')});
++
++ it('flags stale successful observations even when scheduling is configured',()=>{vi.spyOn(Date,'now').mockReturnValue(Date.parse('2020-01-08T00:00:01Z'));const e=gscFixture();e.scheduledExecutionInstalled=true;const s=renderToStaticMarkup(<GscApiEvidence evidence={e}/>);expect(s).toContain('超过 48 小时');expect(s).toContain('配置状态不代表任务正在正常运行')});
++ it('does not mark exactly 48 hours old data stale',()=>{vi.spyOn(Date,'now').mockReturnValue(Date.parse('2020-01-08T00:00:00Z'));const s=renderToStaticMarkup(<GscApiEvidence evidence={gscFixture()}/>);expect(s).not.toContain('超过 48 小时未成功更新')});
++ it('keeps last successful values and clearly marks a later failed attempt',()=>{const e=gscFixture();e.lastAttempt={at:'2020-01-06T01:00:00Z',status:'failed'};const s=renderToStaticMarkup(<GscApiEvidence evidence={e}/>);expect(s).toContain('最近一次采集失败');expect(s).toContain('2020-01-06T01:00:00Z');expect(s).toContain('— / — / — / —')});
++
++});
+diff --git a/src/components/liekan/features/GscApiEvidence.tsx b/src/components/liekan/features/GscApiEvidence.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/components/liekan/features/GscApiEvidence.tsx
+@@ -0,0 +1,58 @@
++'use client';
++import { useLiekanI18n } from '@/lib/liekan/i18n/client';
++import type { GscApiEvidence as Evidence } from '@/lib/liekan/contracts/gsc-api-evidence';
++
++export function GscApiEvidence({ evidence: e }: { evidence: Evidence }) {
++  const { locale } = useLiekanI18n();
++  const t = (zh: string, en: string) => locale === 'en-US' ? en : zh;
++  const total = e.reports.total.rows[0];
++  const value = (v: number | null | undefined) => v ?? '—';
++  const stale = Date.now() - Date.parse(e.collectedAt) > 48 * 60 * 60 * 1000;
++  const failed = e.lastAttempt?.status === 'failed';
++  const views = [
++    ['total', t('搜索总览', 'Search overview')],
++    ['days', t('按日期', 'By date')],
++    ['pages', t('按页面', 'By page')],
++    ['countries_devices', t('按地区与设备组合', 'By country and device')],
++  ] as const;
++  const labels: Record<string, string> = {
++    date: t('日期', 'Date'), page: t('页面', 'Page'), page_language_group: t('页面语言', 'Page language'),
++    country: t('地区', 'Country'), device: t('设备', 'Device'), clicks: t('点击', 'Clicks'),
++    impressions: t('展示', 'Impressions'), ctr: t('点击率（比例）', 'CTR (ratio)'), position: t('平均排名', 'Average position'),
++  };
++  return <div className="space-y-2" aria-label={t('Google 官方搜索数据', 'Official Google search data')}>
++    <p>{t('最近一次成功取数', 'Latest successful collection')}：{e.collectedAt}</p>
++    {failed && <p role="status">{t('最近一次采集失败，以下保留上次成功数据；不是最新结果，也不按 0 处理。', 'The latest collection failed. Values below retain the previous successful observation, not a current result or zero.')} {t('失败时间', 'Failed at')}：{e.lastAttempt.at}</p>}
++    {stale && <p role="status">{t('数据已超过 48 小时未成功更新，请检查采集任务；不要当作当前表现。', 'No successful update for over 48 hours. Check collection; these values are not current performance.')}</p>}
++    <p>{e.scheduledExecutionInstalled
++      ? t('已配置定时采集；配置状态不代表任务正在正常运行。', 'Scheduled collection is configured; configuration does not establish current health.')
++      : t('定时采集尚未配置。', 'Scheduled collection is not configured.')}
++      {t('刷新面板只会读取已保存的数据，不会立即向 Google 查询。', 'Refreshing the panel reads saved data and does not query Google live.')}</p>
++    <p>{t('统计日期（含首尾日期）', 'Reporting dates (inclusive)')}：{e.window.start_date_inclusive} – {e.window.end_date_inclusive}</p>
++    <p>{t('点击 / 展示 / 点击率 / 平均排名', 'Clicks / impressions / CTR / average position')}：{value(total?.clicks)} / {value(total?.impressions)} / {total?.ctr === null || total?.ctr === undefined ? '—' : `${total.ctr * 100}%`} / {value(total?.position)}</p>
++    {e.availability === 'no_rows_returned' && <p>{t('Google 已成功响应，但该日期范围没有返回统计行。指标未知；不能据此判断为 0、数据处理中或没有搜索可见度。', 'Google responded successfully but returned no rows for this date range. Metrics remain unknown; this does not establish zero visibility or processing status.')}</p>}
++    {e.availability === 'observed_rows' && !total && <p>{t('有明细行，但总览未返回；不把明细相加冒充总量。', 'Detail rows were returned but no overview row; details are not summed into a total.')}</p>}
++    {views.map(([key, label]) => {
++      const r = e.reports[key];
++      const dimensions = key === 'days' ? ['date'] : key === 'pages' ? ['page', 'page_language_group'] : key === 'countries_devices' ? ['country', 'device'] : [];
++      const cols = [...dimensions, 'clicks', 'impressions', 'ctr', 'position'];
++      return <details key={key}>
++        <summary className="cursor-pointer">{label} ({r.row_count})</summary>
++        {!r.rows.length ? <p>{t('未返回统计行，不能按 0 解读。', 'No rows returned; not zero.')}</p> : <div className="overflow-auto max-h-80"><table className="w-full text-left">
++          <caption className="sr-only">{label}</caption>
++          <thead><tr>{cols.map(c => <th key={c} className="p-2">{labels[c]}</th>)}</tr></thead>
++          <tbody>{r.rows.map((row, i) => <tr key={i}>{cols.map(c => <td className="p-2" key={c}>{String((row as Record<string, unknown>)[c] ?? '—')}</td>)}</tr>)}</tbody>
++        </table></div>}
++      </details>;
++    })}
++    <p>{t('各聚合独立，不强求各维度对齐。这是 Google 搜索表现；AI 引用、索引检查、浏览器访问是独立数据。', 'Aggregations remain separate and need not align. These are Google search metrics, separate from AI citations, index checks and browser visits.')}</p>
++    <details><summary className="cursor-pointer">{t('数据来源与统计口径', 'Source and measurement details')}</summary>
++      <p>{t('来源与权限', 'Source and access')}：Google Search Console API · {e.property} · {e.permissionLevel} · {e.credentialMode}</p>
++      <p>{t('官方日界', 'Provider timezone')}：America/Los_Angeles (PT) · dataState=final · Web · auto/byPage</p>
++      <p>{t('日期遵循官方 PT 日界（含夏令时），不按北京时间重新切日。页面只包含 Himax；国家与设备是组合维度，不分别当作两个独立总量。', 'Dates retain provider PT boundaries including daylight saving, without rebucketing to Shanghai. Pages are Himax-only; country/device rows are paired dimensions, not separate totals.')}</p>
++      <p>{t('接口返回热门行，不保证完整总体；明细点击率保留 0–1 比例。以下保留各表官方返回状态，便于核查。', 'The API returns top rows, not a guaranteed complete population. Detail CTR retains the 0–1 ratio. Source report states are retained below.')}</p>
++      {views.map(([key, label]) => <p key={key}>{label}：{e.reports[key].status} · {e.reports[key].response_aggregation_types.join(', ') || t('未返回聚合类型', 'No aggregation type returned')} · {t('触及分页上限', 'Pagination limit reached')}：{e.reports[key].bounded_pagination_limit_reached ? t('是', 'Yes') : t('否', 'No')}</p>)}
++      <p>{t('最近采集尝试', 'Latest collection attempt')}：{e.lastAttempt ? `${e.lastAttempt.at} · ${e.lastAttempt.status}` : t('未记录；不能据此推断任务健康', 'Not recorded; health cannot be inferred')}</p>
++    </details>
++  </div>;
++}
+diff --git a/src/components/liekan/features/OfficialSearchAi.tsx b/src/components/liekan/features/OfficialSearchAi.tsx
+--- a/src/components/liekan/features/OfficialSearchAi.tsx
++++ b/src/components/liekan/features/OfficialSearchAi.tsx
+@@ -1,4 +1,5 @@
+ 'use client';
++import { GscApiEvidence } from './GscApiEvidence';
+ import { useApi } from '@/components/hooks/useApi';
+ import { featureApi } from '@/lib/liekan/upstream/features-client';
+ import { useLiekanI18n } from '@/lib/liekan/i18n/client';
+@@ -20,10 +21,10 @@
+   const s = !failed && response?.state === 'available' ? response.snapshot : null;
+   return <section className="card p-5 space-y-4" aria-label={t('官方搜索与 AI 引用', 'Official search and AI citations')}>
+     <header className="flex items-start justify-between gap-3"><div><h2 className="text-[14px] font-bold">{t('官方搜索与 AI 引用', 'Official search and AI citations')}</h2>
+-      <p className="text-[12px] text-sub mt-1">{t('独立官方快照 · 非实时 · 不随上方日期筛选变化', 'Separate official snapshot · not live · independent of the date filter above')}</p></div>{onRefresh && <button type="button" className="px-3 py-1.5 rounded-md border border-line text-[12px]" onClick={onRefresh}>{t('刷新快照', 'Refresh snapshot')}</button>}</header>
++      <p className="text-[12px] text-sub mt-1">{t('独立官方数据 · 各来源时间与范围分别展示', 'Separate official evidence · each source keeps its own dates and scope')}</p></div>{onRefresh && <button type="button" className="px-3 py-1.5 rounded-md border border-line text-[12px]" onClick={onRefresh}>{t('刷新快照', 'Refresh snapshot')}</button>}</header>
+     {!s ? <p className="text-[12px] text-sub">{response?.state === 'not_connected' && !failed ? t('尚未导入官方快照，指标未按 0 处理。', 'No official snapshot imported. Missing metrics are not zero.') : t('官方快照读取失败，未显示旧值或按 0 处理。', 'Official snapshot unavailable. Stale values are hidden; missing metrics are not zero.')}</p> : <>
+-      <p className="text-[12px] text-sub">{s.hostname} · {t('官方页面所选范围', 'Selected provider range')}：{s.selectedWindow.start} – {s.selectedWindow.endInclusive}<br />
+-        {t('官方导出日期', 'Official export date')}：{s.exportDate} · {t('整理时间', 'Prepared at')}：{s.preparedAt} · {t('官方页面读取时间', 'Provider observed at')}：{s.observedAt ?? t('未记录', 'Not recorded')}</p>
++      <p className="text-[12px] text-sub">{s.hostname} · {t('Bing 页面所选范围', 'Selected Bing range')}：{s.selectedWindow.start} – {s.selectedWindow.endInclusive}<br />
++        {t('Bing 官方导出日期', 'Bing official export date')}：{s.exportDate} · {t('整理时间', 'Prepared at')}：{s.preparedAt} · {t('Bing 页面读取时间', 'Bing observed at')}：{s.observedAt ?? t('未记录', 'Not recorded')}</p>
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+         <div className="rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing Search Performance</h3>
+           {s.bingSearch.state !== 'available' ? <p>{s.bingSearch.reason}</p> : <>
+@@ -51,11 +52,11 @@
+         </div>
+       </div>
+       <div className="text-[12px] text-sub space-y-1"><h3 className="font-bold">Google Search Console</h3>
+-        <p>{s.gsc.ownership === 'verified' ? t('属性所有权已验证。', 'Property ownership verified.') : t('属性所有权尚未确认。', 'Property ownership not confirmed.')}
++        {s.gsc.apiEvidence ? <GscApiEvidence evidence={s.gsc.apiEvidence} /> : <><p>{s.gsc.ownership === 'verified' ? t('属性所有权已验证。', 'Property ownership verified.') : t('属性所有权尚未确认。', 'Property ownership not confirmed.')}
+           {s.gsc.performance === 'processing' ? t('官方表现数据处理中。', 'Performance data is processing.') : t('表现数据尚未接入。', 'Performance metrics are not connected.')}
+-          {s.gsc.automaticSync === 'deferred_mfa' ? t('自动 API 同步按用户决定暂缓（Google Cloud 要求 MFA）。', 'Automatic API sync deferred by the owner because Google Cloud requires MFA.') : t('自动同步未接通。', 'Automatic sync is not connected.')}</p>
+-        <p>{t('首页已索引', 'Homepage indexed')}：{s.gsc.homepageIndexed === null ? t('未知', 'Unknown') : s.gsc.homepageIndexed ? t('是', 'Yes') : t('否', 'No')} · {t('Sitemap 已发现 URL', 'Sitemap discovered URLs')}：{s.gsc.sitemapDiscoveredUrls ?? '—'} · {t('点击 / 展示 / AI 引用', 'Clicks / impressions / AI citations')}：— / — / —</p>
+-        <p>{t('GSC 核查时间', 'GSC checked at')}：{s.gsc.checkedAt ?? t('未记录', 'Not recorded')} · {t('ChatGPT 固定题库实测：尚未采样；引用未知。', 'ChatGPT fixed-question sampling: not run; citations unknown.')}</p>
++          {s.gsc.automaticSync === 'deferred_mfa' ? t('自动 API 同步按用户决定暂缓（Google Cloud 要求 MFA）。', 'Automatic API sync deferred by the owner because Google Cloud requires MFA.') : t('自动同步未接通。', 'Automatic sync is not connected.')}</p></>}
++        <p>{t('首页已索引', 'Homepage indexed')}：{s.gsc.homepageIndexed === null ? t('未知', 'Unknown') : s.gsc.homepageIndexed ? t('是', 'Yes') : t('否', 'No')} · {t('Sitemap 已发现 URL', 'Sitemap discovered URLs')}：{s.gsc.sitemapDiscoveredUrls ?? '—'}{!s.gsc.apiEvidence && <> · {t('点击 / 展示 / AI 引用', 'Clicks / impressions / AI citations')}：— / — / —</>}</p>
++        <p>{t('GSC 网页所有权/索引核查时间', 'GSC website ownership/index check at')}：{s.gsc.checkedAt ?? t('未记录', 'Not recorded')} · {t('ChatGPT 固定题库实测：尚未采样；引用未知。', 'ChatGPT fixed-question sampling: not run; citations unknown.')}</p>
+       </div>
+       <p className="text-[12px] text-sub">{t('官方导出有处理延迟与抽样限制；缺失日不补 0。所有数据保持独立来源，不并入浏览器 PV/UV、爬虫请求、GEO 权重或转化。', 'Official exports have processing delays and sampling limits. Missing days stay unknown. These data are separate from browser PV/UV, crawler requests, GEO weight and conversions.')}</p>
+     </>}
+diff --git a/src/lib/liekan/contracts/gsc-api-evidence.fixture.ts b/src/lib/liekan/contracts/gsc-api-evidence.fixture.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/contracts/gsc-api-evidence.fixture.ts
+@@ -0,0 +1,7 @@
++import type {GscApiEvidence} from './gsc-api-evidence';
++export function gscFixture():GscApiEvidence {
++ const empty=()=>({status:'no_rows_returned' as const,rows:[],row_count:0,bounded_pagination_limit_reached:false,response_aggregation_types:[],response_aggregation_type_missing:true,complete_population_guaranteed:false as const});
++ return {protocol:'himax-gsc-api-display-v1',property:'https://www.himaxtec.com/',collectedAt:'2020-01-06T00:00:00Z',sourceSha256:'a'.repeat(64),permissionLevel:'siteRestrictedUser',credentialMode:'service_account',scheduledExecutionInstalled:false,
++ window:{start_date_inclusive:'2020-01-01',end_date_inclusive:'2020-01-03',source_timezone:'America/Los_Angeles',data_state:'final'},
++ scope:{search_type:'web',page_filter:'^https://(www\\.)?himaxtec\\.com/',aggregation:'auto_with_page_filter',ai_specific:false},availability:'no_rows_returned',processingStatus:'unknown_not_reported_by_api',reports:{total:empty(),days:empty(),pages:empty(),countries_devices:empty()}};
++}
+diff --git a/src/lib/liekan/contracts/gsc-api-evidence.test.ts b/src/lib/liekan/contracts/gsc-api-evidence.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/contracts/gsc-api-evidence.test.ts
+@@ -0,0 +1,19 @@
++import {describe,it,expect} from 'vitest';
++import {gscApiEvidenceSchema} from './gsc-api-evidence';
++import {officialSearchAiSchema} from './official-search-ai';
++import {officialFixture} from './official-search-ai.fixture';
++import {gscFixture} from './gsc-api-evidence.fixture';
++describe('GSC verified API evidence boundary',()=>{
++ it('accepts successful authenticated read with no rows without inventing processing/zero',()=>{const e=gscApiEvidenceSchema.parse(gscFixture());expect(e.availability).toBe('no_rows_returned');expect(e.processingStatus).toBe('unknown_not_reported_by_api');expect(e.reports.total.rows).toEqual([])});
++ it.each([{permissionLevel:'siteOwner'},{property:'https://unrelated.invalid/'},{processingStatus:'processing'},{sourceSha256:'bad'}])('rejects unsupported metadata %j',bad=>expect(gscApiEvidenceSchema.safeParse({...gscFixture(),...bad}).success).toBe(false));
++ it('rejects timezone substitution',()=>{const e=gscFixture();(e.window as any).source_timezone='Asia/Shanghai';expect(gscApiEvidenceSchema.safeParse(e).success).toBe(false)});
++ it('rejects status/row contradiction',()=>{const e=gscFixture();e.availability='observed_rows';expect(gscApiEvidenceSchema.safeParse(e).success).toBe(false)});
++ it('preserves partial observations and actual zero while total stays missing',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.days={...e.reports.days,status:'observed',row_count:1,rows:[{date:'2020-01-02',clicks:0,impressions:2,ctr:0,position:3}]};const got=gscApiEvidenceSchema.parse(e);expect(got.reports.days.rows[0].clicks).toBe(0);expect(got.reports.total.rows).toEqual([])});
++ it('rejects duplicate or out-of-window dates',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.days={...e.reports.days,status:'observed',row_count:1,rows:[{date:'2021-01-02',clicks:0,impressions:2,ctr:0,position:3}]};expect(gscApiEvidenceSchema.safeParse(e).success).toBe(false)});
++ it('rejects false API-connected snapshot without evidence',()=>{const s=officialFixture();s.gsc.automaticSync='api_read_verified';expect(officialSearchAiSchema.safeParse(s).success).toBe(false)});
++ it('accepts existing manual snapshot and separately verified API no_rows snapshot',()=>{const s=officialFixture();expect(officialSearchAiSchema.safeParse(s).success).toBe(true);s.gsc.apiEvidence=gscFixture();s.refreshMode='mixed_official_sources';s.gsc.automaticSync='api_read_verified';s.gsc.performance='no_rows_returned';expect(officialSearchAiSchema.safeParse(s).success).toBe(true)});
++ it('rejects invalid page URLs without throwing from safeParse',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.pages={...e.reports.pages,status:'observed',row_count:1,rows:[{page:'not a URL',clicks:1,impressions:1,ctr:1,position:1}]};expect(gscApiEvidenceSchema.safeParse(e).success).toBe(false)});
++ it('rejects duplicate aggregate keys',()=>{const e=gscFixture();e.availability='observed_rows';const row={date:'2020-01-02',clicks:1,impressions:1,ctr:1,position:1};e.reports.days={...e.reports.days,status:'observed',row_count:2,rows:[row,row]};expect(gscApiEvidenceSchema.safeParse(e).success).toBe(false)});
++ it('rejects another property page even if headline property is Himax',()=>{const e=gscFixture();e.availability='observed_rows';e.reports.pages={...e.reports.pages,status:'observed',row_count:1,rows:[{page:'https://unrelated.invalid/',clicks:1,impressions:1,ctr:1,position:1}]};expect(gscApiEvidenceSchema.safeParse(e).success).toBe(false)});
++
++});
+diff --git a/src/lib/liekan/contracts/gsc-api-evidence.ts b/src/lib/liekan/contracts/gsc-api-evidence.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/contracts/gsc-api-evidence.ts
+@@ -0,0 +1,49 @@
++import { z } from 'zod';
++const metric = z.number().finite().nonnegative().nullable();
++const count = z.number().int().nonnegative().safe();
++const row = z.object({
++  date: z.string().date().optional(), page: z.string().url().optional(),
++  page_language_group: z.enum(['zh', 'en', 'unknown']).optional(),
++  country: z.string().max(16).optional(), device: z.string().max(32).optional(),
++  clicks: metric, impressions: metric, ctr: z.number().finite().min(0).max(1).nullable(), position: metric,
++}).strict();
++const report = z.object({
++  status: z.enum(['observed', 'no_rows_returned']), rows: z.array(row).max(1000), row_count: count,
++  bounded_pagination_limit_reached: z.boolean(), response_aggregation_types: z.array(z.enum(['byPage', 'auto'])),
++  response_aggregation_type_missing: z.boolean(), complete_population_guaranteed: z.literal(false),
++}).strict().superRefine((r,ctx) => {
++  if (r.row_count !== r.rows.length || (r.rows.length > 0) !== (r.status === 'observed')) ctx.addIssue({code:'custom',message:'Report count/status mismatch'});
++});
++export const gscApiEvidenceSchema = z.object({
++  protocol: z.literal('himax-gsc-api-display-v1'), property: z.literal('https://www.himaxtec.com/'),
++  collectedAt: z.string().datetime({offset:true}), sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
++  permissionLevel: z.literal('siteRestrictedUser'), credentialMode: z.literal('service_account'),
++  scheduledExecutionInstalled: z.boolean(),
++  lastAttempt: z.object({at:z.string().datetime({offset:true}),status:z.enum(['read_verified','failed'])}).strict().optional(),
++  window: z.object({start_date_inclusive:z.string().date(),end_date_inclusive:z.string().date(),source_timezone:z.literal('America/Los_Angeles'),data_state:z.literal('final')}).strict(),
++  scope: z.object({search_type:z.literal('web'),page_filter:z.literal('^https://(www\\.)?himaxtec\\.com/'),aggregation:z.literal('auto_with_page_filter'),ai_specific:z.literal(false)}).strict(),
++  availability: z.enum(['observed_rows','no_rows_returned']),
++  processingStatus: z.literal('unknown_not_reported_by_api'),
++  reports: z.object({total:report,days:report,pages:report,countries_devices:report}).strict(),
++}).strict().superRefine((e,ctx) => {
++  if(e.lastAttempt && (Date.parse(e.lastAttempt.at)<Date.parse(e.collectedAt) || (e.lastAttempt.status==='read_verified' && e.lastAttempt.at!==e.collectedAt))) ctx.addIssue({code:'custom',message:'Latest attempt conflicts with last successful observation'});
++  const start=e.window.start_date_inclusive,end=e.window.end_date_inclusive;
++  const days=(Date.parse(end)-Date.parse(start))/86400000+1;
++  if(days<1 || days>31)ctx.addIssue({code:'custom',message:'Requires 1–31 provider dates'});
++  if(e.reports.total.rows.length>1)ctx.addIssue({code:'custom',message:'Total must have at most one aggregate row'});
++  const anyRows=Object.values(e.reports).some(r=>r.rows.length>0);
++  if(anyRows!==(e.availability==='observed_rows'))ctx.addIssue({code:'custom',message:'Availability mismatch'});
++  for(const [name,r] of Object.entries(e.reports)) {
++    const keys=new Set<string>();
++    for(const v of r.rows) {
++      const dimensions=Object.keys(v).filter(k=>!['clicks','impressions','ctr','position','page_language_group'].includes(k)).sort();
++      const expected=({total:[],days:['date'],pages:['page'],countries_devices:['country','device']} as Record<string,string[]>)[name];
++      if(JSON.stringify(dimensions)!==JSON.stringify(expected))ctx.addIssue({code:'custom',message:'Dimension mismatch'});
++      if(v.date && (v.date<start || v.date>end))ctx.addIssue({code:'custom',message:'Date outside requested window'});
++      if(v.page) { try { const u=new URL(v.page); if(u.protocol!=='https:' || !['himaxtec.com','www.himaxtec.com'].includes(u.host) || u.search || u.hash || u.username || u.password)ctx.addIssue({code:'custom',message:'Page outside Himax'}); } catch { ctx.addIssue({code:'custom',message:'Invalid page URL'}); } }
++      const key=JSON.stringify(expected.map(k=>(v as Record<string,unknown>)[k]));
++      if(keys.has(key))ctx.addIssue({code:'custom',message:'Duplicate aggregate row'});keys.add(key);
++    }
++  }
++});
++export type GscApiEvidence=z.infer<typeof gscApiEvidenceSchema>;
+diff --git a/src/lib/liekan/contracts/official-search-ai.ts b/src/lib/liekan/contracts/official-search-ai.ts
+--- a/src/lib/liekan/contracts/official-search-ai.ts
++++ b/src/lib/liekan/contracts/official-search-ai.ts
+@@ -1,4 +1,5 @@
+ import { z } from 'zod';
++import { gscApiEvidenceSchema } from './gsc-api-evidence';
+ const count = z.number().int().nonnegative().safe();
+ const date = z.string().date();
+ const instant = z.string().datetime({ offset: true });
+@@ -25,19 +26,26 @@
+ export const officialSearchAiSchema = z.object({
+   version: z.literal(1), websiteId: z.uuid(), hostname: z.enum(['himaxtec.com', 'www.himaxtec.com']),
+   provider: z.literal('Official webmaster reports'),
+-  preparedAt: instant, observedAt: instant.nullable(), exportDate: date, refreshMode: z.literal('manual_official_snapshot'),
++  preparedAt: instant, observedAt: instant.nullable(), exportDate: date, refreshMode: z.enum(['manual_official_snapshot', 'mixed_official_sources']),
+   selectedWindow: windowSchema,
+   evidence: z.array(z.object({ file: z.string().regex(/^[A-Za-z0-9_.-]{1,160}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).min(1).max(20),
+   bingSearch: z.union([availableSearch, unavailable]), bingAi: z.union([availableAi, unavailable]),
+   gsc: z.object({
+     ownership: z.enum(['verified', 'not_verified', 'unknown']),
+-    performance: z.enum(['processing', 'not_connected', 'unavailable']),
+-    automaticSync: z.enum(['deferred_mfa', 'not_connected', 'awaiting_authorization']),
++    performance: z.enum(['processing', 'not_connected', 'unavailable', 'observed_rows', 'no_rows_returned']),
++    automaticSync: z.enum(['deferred_mfa', 'not_connected', 'awaiting_authorization', 'api_read_verified']),
+     homepageIndexed: z.boolean().nullable(), sitemapDiscoveredUrls: count.nullable(), checkedAt: instant.nullable(),
+     clicks: z.null(), impressions: z.null(), citations: z.null(),
++    apiEvidence: gscApiEvidenceSchema.optional(),
+   }).strict(),
+   chatgpt: z.object({ state: z.literal('not_sampled'), citations: z.null() }).strict(),
+ }).strict().superRefine((s, ctx) => {
++  if (s.gsc.apiEvidence && s.refreshMode !== 'mixed_official_sources') ctx.addIssue({ code: 'custom', message: 'API evidence must declare mixed source refresh modes' });
++  if ((s.gsc.automaticSync === 'api_read_verified') !== !!s.gsc.apiEvidence ||
++      (s.gsc.apiEvidence && s.gsc.performance !== s.gsc.apiEvidence.availability))
++    ctx.addIssue({ code: 'custom', message: 'API connection status requires matching verified evidence' });
++  if (s.gsc.apiEvidence && Date.parse(s.gsc.apiEvidence.collectedAt) > Date.parse(s.preparedAt)) ctx.addIssue({code:'custom',message:'GSC observation after preparation'});
++  if (s.gsc.apiEvidence?.lastAttempt && Date.parse(s.gsc.apiEvidence.lastAttempt.at) > Date.parse(s.preparedAt)) ctx.addIssue({code:'custom',message:'GSC latest attempt after preparation'});
+   const end = s.selectedWindow.endInclusive;
+   for (const v of [s.bingSearch, s.bingAi]) {
+     if (v.state !== 'available') continue;
+diff --git a/src/lib/liekan/official-gsc-snapshot-candidate.test.ts b/src/lib/liekan/official-gsc-snapshot-candidate.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/official-gsc-snapshot-candidate.test.ts
+@@ -0,0 +1,29 @@
++// @vitest-environment node
++import { createHash } from 'node:crypto';
++import { describe, expect, it } from 'vitest';
++import { prepareGscSnapshotCandidate } from './official-gsc-snapshot-candidate';
++import { gscFixture } from './contracts/gsc-api-evidence.fixture';
++import { officialFixture } from './contracts/official-search-ai.fixture';
++const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
++function collector() {
++ const e=gscFixture();
++ return {protocol:'himax-search-readonly-v1',project:'himax-homepage',provider:'gsc',property:e.property,collected_at:e.collectedAt,status:'read_verified',not_website_deployment:true,business_improvement_verified:false,permission_level:'siteRestrictedUser',window:e.window,scope:e.scope,reports:e.reports,
++ credential_mode:{protocol:'himax-gsc-service-account-v1',type:'service_account',identity_pins_verified:true,property_permission_verified:'siteRestrictedUser',scopes_requested:['https://www.googleapis.com/auth/webmasters.readonly'],token_persisted_in_evidence:false,scheduled_execution_installed:false},
++ data_availability:{status:'no_rows_returned',processing_status:'unknown_not_reported_by_api',empty_is_not_zero:true,source_data_state_requested:'final'},
++ inspections:[{not_copied:'synthetic inspection'}],arbitrary_sensitive_value:'synthetic omitted field'};
++}
++function input(c=collector()) {const s=officialFixture();s.websiteId='e7d76cef-2135-4507-a59c-1cc74839aa0a';s.preparedAt='2020-01-05T00:00:00Z';s.observedAt=null;const currentSnapshotJson=JSON.stringify(s);return {currentSnapshotJson,expectedSnapshotSha256:sha(currentSnapshotJson),collectorJson:JSON.stringify(c),preparedAt:'2020-01-06T00:10:00Z'};}
++describe('offline GSC candidate preparation',()=>{
++ it('preserves independent evidence and historical index checks, with null empty metrics',()=>{
++  const i=input(),result=prepareGscSnapshotCandidate(i),before=JSON.parse(i.currentSnapshotJson),after=JSON.parse(result.candidateJson);
++  for(const field of ['bingSearch','bingAi','chatgpt','observedAt','selectedWindow','exportDate'])expect(after[field]).toEqual(before[field]);
++  expect(after.gsc.checkedAt).toBe(before.gsc.checkedAt);expect(after.gsc.clicks).toBeNull();expect(after.gsc.apiEvidence.reports.total.rows).toEqual([]);expect(after.gsc.automaticSync).toBe('api_read_verified');expect(after.gsc.apiEvidence.scheduledExecutionInstalled).toBe(false);
++  expect(result.candidateJson).not.toContain('synthetic omitted field');expect(result.candidateJson).not.toContain('synthetic inspection');expect(result.candidateSha256).toBe(sha(result.candidateJson));expect(result.expectedPreviousSha256).toBe(i.expectedSnapshotSha256);
++ });
++ it('rejects stale source before CAS candidate preparation',()=>expect(()=>prepareGscSnapshotCandidate({...input(),expectedSnapshotSha256:'b'.repeat(64)})).toThrow('Snapshot changed'));
++ it('rejects a different website id',()=>{const i=input();const s=JSON.parse(i.currentSnapshotJson);s.websiteId='22222222-2222-4222-8222-222222222222';i.currentSnapshotJson=JSON.stringify(s);i.expectedSnapshotSha256=sha(i.currentSnapshotJson);expect(()=>prepareGscSnapshotCandidate(i)).toThrow('Only Himax')});
++ it.each(['property','permission_level','status'])('rejects unsupported source identity/state %s',field=>{const c=collector();(c as any)[field]='unsupported';expect(()=>prepareGscSnapshotCandidate(input(c))).toThrow()});
++ it('does not infer total from a partial daily row or replace actual zero',()=>{const c=collector();c.data_availability.status='observed_rows';c.reports.days={...c.reports.days,status:'observed',row_count:1,rows:[{date:'2020-01-01',clicks:0,impressions:5,ctr:0,position:3}]};const s=JSON.parse(prepareGscSnapshotCandidate(input(c)).candidateJson);expect(s.gsc.apiEvidence.reports.days.rows[0].clicks).toBe(0);expect(s.gsc.apiEvidence.reports.total.rows).toEqual([])});
++ it('rejects future observation and current PT date even if Shanghai date is later',()=>{const c=collector();c.collected_at='2020-01-03T16:00:00Z';c.window.end_date_inclusive='2020-01-03';expect(()=>prepareGscSnapshotCandidate(input(c))).toThrow('PT date');const i=input();i.preparedAt='2019-01-01T00:00:00Z';expect(()=>prepareGscSnapshotCandidate(i)).toThrow('precedes')});
++ it('does not accumulate repeated current-source manifest entries on refresh',()=>{const first=prepareGscSnapshotCandidate(input());const i=input();i.currentSnapshotJson=first.candidateJson;i.expectedSnapshotSha256=first.candidateSha256;const second=JSON.parse(prepareGscSnapshotCandidate(i).candidateJson);expect(second.evidence.filter((e:any)=>e.file==='gsc-service-account-result.json')).toHaveLength(1)});
++});
+diff --git a/src/lib/liekan/official-gsc-snapshot-candidate.ts b/src/lib/liekan/official-gsc-snapshot-candidate.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/liekan/official-gsc-snapshot-candidate.ts
+@@ -0,0 +1,35 @@
++/** Offline projection only. No credentials, network, filesystem, or publication. */
++import { createHash } from 'node:crypto';
++import { z } from 'zod';
++import { gscApiEvidenceSchema } from './contracts/gsc-api-evidence';
++import { officialSearchAiSchema } from './contracts/official-search-ai';
++const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
++const collectorSchema = z.object({
++  protocol: z.literal('himax-search-readonly-v1'), project: z.literal('himax-homepage'), provider: z.literal('gsc'),
++  property: z.literal('https://www.himaxtec.com/'), collected_at: z.string().datetime({offset:true}),
++  status: z.literal('read_verified'), not_website_deployment: z.literal(true), business_improvement_verified: z.literal(false),
++  permission_level: z.literal('siteRestrictedUser'), window: gscApiEvidenceSchema.shape.window,
++  scope: gscApiEvidenceSchema.shape.scope, reports: gscApiEvidenceSchema.shape.reports,
++  credential_mode: z.object({protocol:z.literal('himax-gsc-service-account-v1'),type:z.literal('service_account'),identity_pins_verified:z.literal(true),property_permission_verified:z.literal('siteRestrictedUser'),scopes_requested:z.tuple([z.literal('https://www.googleapis.com/auth/webmasters.readonly')]),token_persisted_in_evidence:z.literal(false),scheduled_execution_installed:z.boolean()}),
++  data_availability:z.object({status:z.enum(['observed_rows','no_rows_returned']),processing_status:z.literal('unknown_not_reported_by_api'),empty_is_not_zero:z.literal(true),source_data_state_requested:z.literal('final')}),
++});
++export function prepareGscSnapshotCandidate(input: {currentSnapshotJson:string;expectedSnapshotSha256:string;collectorJson:string;preparedAt:string}) {
++  if(input.currentSnapshotJson.length>2_000_000 || input.collectorJson.length>2_000_000)throw new Error('Snapshot preparation exceeds bounded size');
++  if(!/^[a-f0-9]{64}$/.test(input.expectedSnapshotSha256) || sha(input.currentSnapshotJson)!==input.expectedSnapshotSha256)throw new Error('Snapshot changed; reread before preparing');
++  const previous=officialSearchAiSchema.parse(JSON.parse(input.currentSnapshotJson));
++  if(previous.websiteId!=='e7d76cef-2135-4507-a59c-1cc74839aa0a')throw new Error('Only Himax production snapshot is supported');
++  const c=collectorSchema.parse(JSON.parse(input.collectorJson));
++  const preparedAt=z.string().datetime({offset:true}).parse(input.preparedAt);
++  if(Date.parse(c.collected_at)>Date.parse(preparedAt) || Date.parse(previous.preparedAt)>Date.parse(preparedAt))throw new Error('Preparation precedes source observation');
++  const ptDate=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(c.collected_at));
++  if(c.window.end_date_inclusive>=ptDate)throw new Error('Final data window includes current or future PT date');
++  const sourceSha256=sha(input.collectorJson);
++  const apiEvidence=gscApiEvidenceSchema.parse({protocol:'himax-gsc-api-display-v1',property:c.property,collectedAt:c.collected_at,sourceSha256,permissionLevel:c.permission_level,credentialMode:c.credential_mode.type,scheduledExecutionInstalled:c.credential_mode.scheduled_execution_installed,lastAttempt:{at:c.collected_at,status:'read_verified'},window:c.window,scope:c.scope,availability:c.data_availability.status,processingStatus:c.data_availability.processing_status,reports:c.reports});
++  const evidenceFile='gsc-service-account-result.json';
++  const snapshot=officialSearchAiSchema.parse({...previous,preparedAt,refreshMode:'mixed_official_sources',evidence:[...previous.evidence.filter(e=>e.file!==evidenceFile),{file:evidenceFile,sha256:sourceSha256}],gsc:{...previous.gsc,automaticSync:'api_read_verified',performance:apiEvidence.availability,apiEvidence}});
++  // Caller must reread and compare expectedPreviousSha256 again under a lock
++  // immediately before an atomic private-file replacement. This function does no I/O.
++  const candidateJson=JSON.stringify(snapshot,null,2)+'\n';
++  if(Buffer.byteLength(candidateJson,'utf8')>512*1024)throw new Error('Candidate exceeds existing private snapshot reader limit');
++  return {candidateJson,candidateSha256:sha(candidateJson),expectedPreviousSha256:input.expectedSnapshotSha256,sourceSha256};
++}

@@ -40,6 +40,14 @@
     {
       "path": "patches/official-search-ai.patch",
       "sha256": "abb5b40c95bf35615825f6546641974d874d5f982973976bca82b342dbd7d17e"
+    },
+    {
+      "path": "patches/gsc-api-display.patch",
+      "sha256": "e5ebee6de9dd91d797912be1bfe52d08fe893dc4bd161a8defcf363e2a3eff36"
+    },
+    {
+      "path": "patches/citation-table-layout.patch",
+      "sha256": "f22aaa6e80ea282c2b07722e94882ab21e2e9934ff8f2ec4f6b8bd5ee59c482f"
     }
   ],
   "test_files": [
@@ -68,9 +76,12 @@
     "src/lib/liekan/contracts/official-search-ai.test.ts",
     "src/lib/liekan/upstream/official-search-ai.test.ts",
     "src/app/api/liekan/websites/[websiteId]/official-search-ai/route.test.ts",
-    "src/components/liekan/features/OfficialSearchAi.test.tsx"
+    "src/components/liekan/features/OfficialSearchAi.test.tsx",
+    "src/components/liekan/features/GscApiEvidence.test.tsx",
+    "src/lib/liekan/contracts/gsc-api-evidence.test.ts",
+    "src/lib/liekan/official-gsc-snapshot-candidate.test.ts"
   ],
-  "minimum_passed_tests": 363,
+  "minimum_passed_tests": 396,
   "required_skipped_tests": 0,
   "semantics": "Synthetic fixed-fixture tests; no real visitor data, credentials, or server snapshots.",
   "integration_tests": {

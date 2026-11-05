@@ -1,0 +1,80 @@
+diff --git a/src/components/liekan/features/OfficialSearchAi.tsx b/src/components/liekan/features/OfficialSearchAi.tsx
+--- a/src/components/liekan/features/OfficialSearchAi.tsx
++++ b/src/components/liekan/features/OfficialSearchAi.tsx
+@@ -26,7 +26,7 @@
+       <p className="text-[12px] text-sub">{s.hostname} · {t('Bing 页面所选范围', 'Selected Bing range')}：{s.selectedWindow.start} – {s.selectedWindow.endInclusive}<br />
+         {t('Bing 官方导出日期', 'Bing official export date')}：{s.exportDate} · {t('整理时间', 'Prepared at')}：{s.preparedAt} · {t('Bing 页面读取时间', 'Bing observed at')}：{s.observedAt ?? t('未记录', 'Not recorded')}</p>
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+-        <div className="rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing Search Performance</h3>
++        <div className="min-w-0 rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing Search Performance</h3>
+           {s.bingSearch.state !== 'available' ? <p>{s.bingSearch.reason}</p> : <>
+             <p className="text-[18px] font-bold">{s.bingSearch.clicks} {t('点击', 'clicks')} · {s.bingSearch.impressions} {t('展示', 'impressions')} · CTR {s.bingSearch.ctrDisplay}</p>
+             <WindowNote value={s.bingSearch} t={t} />
+@@ -38,7 +38,7 @@
+             <Rows title={t('设备（Web）', 'Devices (Web)')} value={s.bingSearch.devices} />
+           </>}
+         </div>
+-        <div className="rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing AI Performance</h3>
++        <div className="min-w-0 rounded-lg border border-line p-4 space-y-3"><h3 className="font-bold text-[13px]">Bing AI Performance</h3>
+           {s.bingAi.state !== 'available' ? <p>{s.bingAi.reason}</p> : <>
+             <p className="text-[18px] font-bold">{s.bingAi.citations} {t('次官方引用', 'official citations')}</p>
+             <WindowNote value={s.bingAi} t={t} />
+@@ -46,7 +46,7 @@
+             <p className="text-[12px] text-sub">{t('覆盖 Copilot、Bing AI 及支持的伙伴体验；不是 ChatGPT 排名、抓取次数、访问或询盘。Grounding query 是归纳检索词，分享比例按官方原值保留，分母未知。', 'Covers Copilot, Bing AI and supported partner experiences. These are not ChatGPT rankings, crawls, visits or leads. Grounding queries are grouped phrases; citation share is retained as reported with an unknown denominator.')}</p>
+             {s.bingAi.allPositiveDatesBeforeProjectStart && <p className="text-[12px] text-sub">{t('本快照的所有非零引用日期早于本轮 GEO 项目开始，作为既有表现，不认定为本轮优化效果。', 'All positive citation dates in this snapshot predate this GEO project. They show existing visibility, not effects of these changes.')}</p>}
+             <Rows title={t('每日 AI 引用', 'Daily AI citations')} value={s.bingAi.daily} />
+-            <Rows title={t('被引用页面', 'Cited pages')} value={s.bingAi.pages} />
++            <Rows title={t('被引用页面', 'Cited pages')} value={s.bingAi.pages} citedPages />
+             <Rows title={t('Grounding queries 与官方 Citation Share', 'Grounding queries and reported Citation Share')} value={s.bingAi.groundingQueries} />
+           </>}
+         </div>
+@@ -66,10 +66,16 @@
+   return <p className="text-[12px] text-sub">{t('CSV 实际日期', 'Actual CSV dates')}：{value.exportWindow.start} – {value.exportWindow.endInclusive} · {t('来源时区', 'Source timezone')}：{value.sourceTimezone ?? t('未知（保留原始日期）', 'Unknown (original dates retained)')}
+     {value.missingSelectedDates.length > 0 && <><br />{t('所选窗口缺失日期', 'Missing dates in selected window')}：{value.missingSelectedDates.join(', ')}（{t('未知，非 0', 'unknown, not zero')}）</>}</p>;
+ }
+-function Rows({ title, value }: { title: string; value: { columns: string[]; rows: string[][] } }) {
+-  return <details className="text-[12px]"><summary className="cursor-pointer">{title} ({value.rows.length})</summary>
+-    <div className="overflow-x-auto max-h-80 overflow-y-auto"><table className="w-full text-left mt-2"><caption className="sr-only">{title}</caption>
+-      <thead><tr>{value.columns.map((c, i) => <th key={i} className="p-2 border-b border-line">{c}</th>)}</tr></thead>
+-      <tbody>{value.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className="p-2 border-b border-line break-words">{cell}</td>)}</tr>)}</tbody>
+-    </table></div></details>;
++function Rows({ title, value, citedPages = false }: { title: string; value: { columns: string[]; rows: string[][] }; citedPages?: boolean }) {
++  const { locale } = useLiekanI18n();
++  const compact = citedPages && value.columns.length === 2 && value.columns[0].toLowerCase() === 'page' && value.columns[1].toLowerCase() === 'citations';
++  const labels = compact ? (locale === 'en-US' ? ['Page', 'Citations'] : ['页面', '引用次数']) : value.columns;
++  return <details className="min-w-0 text-[12px]"><summary className="cursor-pointer">{title} ({value.rows.length})</summary>
++    <div className="min-w-0 overflow-x-auto max-h-80 overflow-y-auto"><table data-layout={compact ? 'cited-pages' : undefined} className={`w-full text-left mt-2${compact ? ' table-fixed' : ''}`}><caption className="sr-only">{title}</caption>
++      {compact && <colgroup><col /><col className="w-24" /></colgroup>}
++      <thead><tr>{labels.map((c, i) => <th scope="col" key={i} className={`p-2 border-b border-line${compact && i === 1 ? ' text-right' : ''}`}>{c}</th>)}</tr></thead>
++      <tbody>{value.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className={`p-2 border-b border-line align-top ${compact ? (j === 0 ? 'whitespace-normal [overflow-wrap:anywhere]' : 'text-right tabular-nums whitespace-nowrap') : 'break-words'}`}>{cell}</td>)}</tr>)}</tbody>
++    </table></div>
++    {compact && <details className="mt-2"><summary className="cursor-pointer">{locale === 'en-US' ? 'Original source fields' : '原始来源字段'}</summary><p>{value.columns.join(' · ')}</p></details>}
++  </details>;
+ }
+diff --git a/src/components/liekan/features/OfficialSearchAi.test.tsx b/src/components/liekan/features/OfficialSearchAi.test.tsx
+--- a/src/components/liekan/features/OfficialSearchAi.test.tsx
++++ b/src/components/liekan/features/OfficialSearchAi.test.tsx
+@@ -41,4 +41,23 @@
+     const html = renderToStaticMarkup(<OfficialSearchAi userId="synthetic-user" websiteId="22222222-2222-4222-8222-222222222222" />);
+     expect(html).not.toContain('7 次官方引用'); expect(html).toContain('读取失败');
+   });
++  it('keeps full long cited-page URL and count in a bounded accessible two-column table', () => {
++    const snapshot=officialFixture();const longUrl='https://www.himaxtec.com/'+('long-segment-'.repeat(45));
++    if(snapshot.bingAi.state==='available')snapshot.bingAi.pages={columns:['Page','Citations'],rows:[[longUrl,'40']]};
++    const html=renderToStaticMarkup(<OfficialSearchAiCard response={{state:'available',snapshot}} />);
++    const table=html.match(/<table data-layout="cited-pages"[\s\S]*?<\/table>/)?.[0];
++    expect(table).toBeDefined();expect(table).toContain('table-fixed');expect(table).toContain('<col class="w-24"');
++    expect(table).toContain('scope="col"');expect(table).toContain('页面');expect(table).toContain('引用次数');expect(table).toContain(longUrl);expect(table).toContain('>40</td>');
++    expect(table).toContain('[overflow-wrap:anywhere]');expect(table).toContain('tabular-nums');expect(html).toContain('原始来源字段');expect(html).toContain('Page · Citations');
++  });
++  it('uses English labels without translating source fields or dropping values', () => {
++    mocks.locale='en-US';const snapshot=officialFixture();if(snapshot.bingAi.state==='available')snapshot.bingAi.pages={columns:['Page','Citations'],rows:[['https://www.himaxtec.com/en/about','2']]};
++    const html=renderToStaticMarkup(<OfficialSearchAiCard response={{state:'available',snapshot}} />);
++    expect(html).toContain('Original source fields');expect(html).toContain('>Citations</th>');expect(html).toContain('>2</td>');expect(html).not.toContain('>引用次数</th>');
++  });
++  it('does not apply the two-column layout to unrelated official tables', () => {
++    const html=renderToStaticMarkup(<OfficialSearchAiCard response={{state:'available',snapshot:officialFixture()}} />);
++    expect(html).not.toContain('data-layout="cited-pages"');expect(html).toContain('Citation Share');expect(html).toContain('12.34%');
++  });
++
+ });
