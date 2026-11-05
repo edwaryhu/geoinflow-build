@@ -15,9 +15,9 @@ jobs:
       contents: write
     env:
       BASE_TAG: build-6ba7c79d8d26-41787092963-1
-      TARGET_TAG: patch-6ba7c79d8d26-41867262531-1
+      TARGET_TAG: patch-6ba7c79d8d26-41982496708-1
       BASE_SHA: fcafc1e654e99d2cf58532011e9fa92a34f9bb89ae81058ef7bd6bb40493ce18
-      TARGET_SHA: dfec092f004cc3b2e31cba67ecf8c6eba65c6d48b72a12f8fbcb0e8d55a04835
+      TARGET_SHA: 659b76c4c3e9c4f62e178a37bf80be030b0faefcf006f25f8b4112cde96ed324
     steps:
     - name: Fetch only reviewed packaging code and two exact public release assets
       env:
@@ -39,22 +39,23 @@ jobs:
 
         gh release download "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" --pattern app-rootfs.tar.gz --pattern build-records.json --pattern patch-series.json --dir input
 
-        printf ''%s  %s\n'' "$BASE_SHA" input/app-rootfs.tar.xz "$TARGET_SHA" input/app-rootfs.tar.gz ''588a204abbaf331514363f6860b6294a233e01736c573c61b71828558a6e55a6'' input/build-records.json ''bfa4052f660844cb7bf40c3f8cb3672e76c65dbea0caae682be37d0716cf2b8f'' input/patch-series.json | sha256sum --check
+        printf ''%s  %s\n'' "$BASE_SHA" input/app-rootfs.tar.xz "$TARGET_SHA" input/app-rootfs.tar.gz ''d189b9461cdd3acbcb5f44e3d2ef57c1b7db6542dd5bb9827e50b16aab2e89de'' input/build-records.json ''c59c933e73904125f0315e40f2678f6f5f9690b2e7a9f6fc48e08504ed04f22f'' input/patch-series.json | sha256sum --check
 
         '
     - name: Verify build gates and package all changed bytes with complete target manifest
       shell: bash
-      run: "set -euo pipefail\npython3 - <<'CHECK'\nimport hashlib,json\nfrom pathlib import Path\nr=json.loads(Path('input/build-records.json').read_text())\nfor k,v in r.items():\n  b=v['text'].encode();assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256'],k\nassert r['source-commit.txt']['text'].strip()=='6ba7c79d8d263ff620911fdccd90dd90be85dfb7'\nassert r['runtime3-probe-outcome.txt']['text'].strip()=='success'\nassert r['runtime3-probe-exit.txt']['text'].strip()=='0'\nt=json.loads(r['targeted-tests.json']['text']);assert t['success'] and t['numPassedTests']>=335 and t['numFailedTests']==0 and t['numPendingTests']==0\npg=json.loads(r['observation-pg-tests.json']['text']);assert pg['success'] and pg['numFailedTests']==0 and pg['numPassedTests']==2\nnames=[a['fullName'] for s in pg['testResults'] for a in s['assertionResults'] if a['status']=='passed']\nassert any('matches exact raw log populations' in x for x in names) and any('keeps today static errors' in x for x in names)\nassert int(r['app-rootfs-uncompressed-bytes.txt']['text'])<4*1024**3\nassert len(json.loads(Path('input/patch-series.json').read_text())['patches'])==9\nCHECK\npython3 config/ci/package-rootfs-delta.py --base input/app-rootfs.tar.xz --target input/app-rootfs.tar.gz --output output --base-sha256 \"$BASE_SHA\" --target-sha256 \"$TARGET_SHA\" --target-build-run 41867262531\n"
+      run: "set -euo pipefail\npython3 - <<'CHECK'\nimport hashlib,json\nfrom pathlib import Path\nr=json.loads(Path('input/build-records.json').read_text())\nfor k,v in r.items():\n  b=v['text'].encode();assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256'],k\nassert r['source-commit.txt']['text'].strip()=='6ba7c79d8d263ff620911fdccd90dd90be85dfb7'\nassert r['runtime3-probe-outcome.txt']['text'].strip()=='success'\nassert r['runtime3-probe-exit.txt']['text'].strip()=='0'\nt=json.loads(r['targeted-tests.json']['text']);assert t['success'] and t['numPassedTests']>=363 and t['numFailedTests']==0 and t['numPendingTests']==0\npg=json.loads(r['observation-pg-tests.json']['text']);assert pg['success'] and pg['numFailedTests']==0 and pg['numPassedTests']==2\nnames=[a['fullName'] for s in pg['testResults'] for a in s['assertionResults'] if a['status']=='passed']\nassert any('matches exact raw log populations' in x for x in names) and any('keeps today static errors' in x for x in names)\nassert int(r['app-rootfs-uncompressed-bytes.txt']['text'])<4*1024**3\nassert len(json.loads(Path('input/patch-series.json').read_text())['patches'])==10\nCHECK\npython3 config/ci/package-rootfs-delta.py --base input/app-rootfs.tar.xz --target input/app-rootfs.tar.gz --output output --base-sha256 \"$BASE_SHA\" --target-sha256 \"$TARGET_SHA\" --target-build-run 41982496708\n"
     - name: Publish verified delta under a new immutable release
       env:
         GH_TOKEN: ${{ github.token }}
       shell: bash
       run: 'set -euo pipefail
 
-        tag="delta-41867262531-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        tag="delta-41982496708-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-        printf ''%s\n'' ''Content-preserving transport of two already public, hash-pinned app archives. Full target manifest records every file, mode, owner, symlink and hardlink. Delta includes only changed regular-file bytes; unchanged source files must be verified and copied into a new independent root. The target is the successful 335-test patched build with two selected PostgreSQL scenarios, not a new build. No deployment or production data is involved. Parts must be concatenated in listed order and hash-verified before use.'' > "$RUNNER_TEMP/delta-notes.txt"
+        printf ''%s\n'' ''Content-preserving transport of two already public, hash-pinned app archives. Full target manifest records every file, mode, owner, symlink and hardlink. Delta includes only changed regular-file bytes; unchanged source files must be verified and copied into a new independent root. The target is the successful 363-test patched build with two selected PostgreSQL scenarios, not a new build. No deployment or production data is involved. Parts must be concatenated in listed order and hash-verified before use.'' > "$RUNNER_TEMP/delta-notes.txt"
 
-        gh release create "$tag" output/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title ''Verified app archive delta for build 41867262531'' --notes-file "$RUNNER_TEMP/delta-notes.txt"
+        gh release create "$tag" output/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title ''Verified app archive delta for build 41982496708'' --notes-file "$RUNNER_TEMP/delta-notes.txt"
 
         '
+
