@@ -51,7 +51,7 @@
     },
     {
       "path": "patches/citation-table-overflow-fix.patch",
-      "sha256": "aa872ece586331c5f48ffb08f9343c424f449fbf406f23d978849e040f9d4c84"
+      "sha256": "d7923573cc1806e3bea17ceda16a4d85432db21ae4f98f9a9332e095dc51f743"
     }
   ],
   "test_files": [

@@ -31,3 +31,13 @@
    });
    it('uses English labels without translating source fields or dropping values', () => {
      mocks.locale='en-US';const snapshot=officialFixture();if(snapshot.bingAi.state==='available')snapshot.bingAi.pages={columns:['Page','Citations'],rows:[['https://www.himaxtec.com/en/about','2']]};
+--- a/src/components/liekan/pages/Overview.tsx
++++ b/src/components/liekan/pages/Overview.tsx
+@@ -33,6 +33,7 @@
+       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+         <MetricCard
+           label="今日总请求"
++          displayLabel={i18n.locale === 'en-US' ? 'Today content requests' : '今日内容请求'}
+           className="card p-4 fade-in d1"
+           valueClass="num text-[24px] font-bold text-brand mt-1.5"
+           report={report}
