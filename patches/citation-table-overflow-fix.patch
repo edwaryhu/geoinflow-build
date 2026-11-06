@@ -1,0 +1,33 @@
+--- a/src/components/liekan/features/OfficialSearchAi.tsx
++++ b/src/components/liekan/features/OfficialSearchAi.tsx
+@@ -70,11 +70,11 @@
+   const { locale } = useLiekanI18n();
+   const compact = citedPages && value.columns.length === 2 && value.columns[0].toLowerCase() === 'page' && value.columns[1].toLowerCase() === 'citations';
+   const labels = compact ? (locale === 'en-US' ? ['Page', 'Citations'] : ['页面', '引用次数']) : value.columns;
+-  return <details className="min-w-0 text-[12px]"><summary className="cursor-pointer">{title} ({value.rows.length})</summary>
+-    <div className="min-w-0 overflow-x-auto max-h-80 overflow-y-auto"><table data-layout={compact ? 'cited-pages' : undefined} className={`w-full text-left mt-2${compact ? ' table-fixed' : ''}`}><caption className="sr-only">{title}</caption>
+-      {compact && <colgroup><col /><col className="w-24" /></colgroup>}
+-      <thead><tr>{labels.map((c, i) => <th scope="col" key={i} className={`p-2 border-b border-line${compact && i === 1 ? ' text-right' : ''}`}>{c}</th>)}</tr></thead>
+-      <tbody>{value.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className={`p-2 border-b border-line align-top ${compact ? (j === 0 ? 'whitespace-normal [overflow-wrap:anywhere]' : 'text-right tabular-nums whitespace-nowrap') : 'break-words'}`}>{cell}</td>)}</tr>)}</tbody>
++  return <details className="min-w-0 text-[12px]" style={compact ? { minWidth: 0, maxWidth: '100%' } : undefined}><summary className="cursor-pointer">{title} ({value.rows.length})</summary>
++    <div className="min-w-0 overflow-x-auto max-h-80 overflow-y-auto" style={compact ? { minWidth: 0, maxWidth: '100%' } : undefined}><table data-layout={compact ? 'cited-pages' : undefined} className="w-full text-left mt-2" style={compact ? { width: '100%', minWidth: 0, maxWidth: '100%', tableLayout: 'fixed' } : undefined}><caption className="sr-only">{title}</caption>
++      {compact && <colgroup><col /><col style={{ width: 96 }} /></colgroup>}
++      <thead><tr>{labels.map((c, i) => <th scope="col" key={i} style={compact ? { padding: 8, position: 'static', maxWidth: 'none', whiteSpace: i === 0 ? 'normal' : 'nowrap', textAlign: i === 0 ? 'left' : 'right', ...(i === 0 ? { overflowWrap: 'anywhere' } : { width: 96 }) } : undefined} className={`p-2 border-b border-line${compact && i === 1 ? ' text-right' : ''}`}>{c}</th>)}</tr></thead>
++      <tbody>{value.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} style={compact ? { padding: 8, position: 'static', maxWidth: 'none', verticalAlign: 'top', whiteSpace: j === 0 ? 'normal' : 'nowrap', textAlign: j === 0 ? 'left' : 'right', ...(j === 0 ? { overflowWrap: 'anywhere' } : { width: 96, fontVariantNumeric: 'tabular-nums' }) } : undefined} className={`p-2 border-b border-line align-top ${compact ? (j === 0 ? 'whitespace-normal [overflow-wrap:anywhere]' : 'text-right tabular-nums whitespace-nowrap') : 'break-words'}`}>{cell}</td>)}</tr>)}</tbody>
+     </table></div>
+     {compact && <details className="mt-2"><summary className="cursor-pointer">{locale === 'en-US' ? 'Original source fields' : '原始来源字段'}</summary><p>{value.columns.join(' · ')}</p></details>}
+   </details>;
+--- a/src/components/liekan/features/OfficialSearchAi.test.tsx
++++ b/src/components/liekan/features/OfficialSearchAi.test.tsx
+@@ -46,9 +46,9 @@
+     if(snapshot.bingAi.state==='available')snapshot.bingAi.pages={columns:['Page','Citations'],rows:[[longUrl,'40']]};
+     const html=renderToStaticMarkup(<OfficialSearchAiCard response={{state:'available',snapshot}} />);
+     const table=html.match(/<table data-layout="cited-pages"[\s\S]*?<\/table>/)?.[0];
+-    expect(table).toBeDefined();expect(table).toContain('table-fixed');expect(table).toContain('<col class="w-24"');
++    expect(table).toBeDefined();expect(table).toContain('width:100%;min-width:0;max-width:100%;table-layout:fixed');expect(table).toContain('<col style="width:96px"');
+     expect(table).toContain('scope="col"');expect(table).toContain('页面');expect(table).toContain('引用次数');expect(table).toContain(longUrl);expect(table).toContain('>40</td>');
+-    expect(table).toContain('[overflow-wrap:anywhere]');expect(table).toContain('tabular-nums');expect(html).toContain('原始来源字段');expect(html).toContain('Page · Citations');
++    expect(table).toContain('position:static;max-width:none;vertical-align:top;white-space:normal;text-align:left;overflow-wrap:anywhere');expect(table).toContain('text-align:right;width:96px;font-variant-numeric:tabular-nums');expect(html).toContain('原始来源字段');expect(html).toContain('Page · Citations');
+   });
+   it('uses English labels without translating source fields or dropping values', () => {
+     mocks.locale='en-US';const snapshot=officialFixture();if(snapshot.bingAi.state==='available')snapshot.bingAi.pages={columns:['Page','Citations'],rows:[['https://www.himaxtec.com/en/about','2']]};

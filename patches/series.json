@@ -48,6 +48,10 @@
     {
       "path": "patches/citation-table-layout.patch",
       "sha256": "f22aaa6e80ea282c2b07722e94882ab21e2e9934ff8f2ec4f6b8bd5ee59c482f"
+    },
+    {
+      "path": "patches/citation-table-overflow-fix.patch",
+      "sha256": "aa872ece586331c5f48ffb08f9343c424f449fbf406f23d978849e040f9d4c84"
     }
   ],
   "test_files": [
